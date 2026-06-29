@@ -1,7 +1,7 @@
 'use strict';
 // SpokeTuner service worker — installable + offline app shell.
 // Bump CACHE on every deploy so clients pick up new assets.
-const CACHE = 'spoketuner-v1';
+const CACHE = 'spoketuner-v2';
 const ASSETS = [
   './', 'index.html', 'app.js', 'i18n.js', 'manifest.json', 'favicon.png',
   'icons/Icon-192.png', 'icons/Icon-512.png',

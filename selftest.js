@@ -1,13 +1,21 @@
 // Runnable check for the pure math: `node selftest.js`
 const assert = require('assert');
 const {
-  muFromDiameterMm, tensionNewton, newtonToKgf, hzToNote, median, sideStats, GRAVITY,
+  muFromDiameterMm, muFromBladeMm, tensionNewton, newtonToKgf, hzToNote, median, sideStats, GRAVITY,
 } = require('./app.js');
 
 // Physik (Port der Flutter-Tests).
-assert.ok(Math.abs(muFromDiameterMm(2.0) - 0.0247) < 0.0247 * 0.02, 'mu(2.0mm)');
+assert.ok(Math.abs(muFromDiameterMm(2.0) - 0.0247) < 0.0247 * 0.02, 'mu(2.0mm round steel)');
 assert.ok(Math.abs(tensionNewton(422, 0.25, 0.0247) - 1100) < 1100 * 0.03, 'T(422Hz)');
 assert.strictEqual(newtonToKgf(GRAVITY), 1.0, 'N->kgf');
+
+// Nicht-runde / Carbon-Speichen.
+// Flache Stahlspeiche 2,3 x 0,9 mm: rho*w*t = 7850*0.0023*0.0009 ~= 0.01625 kg/m.
+assert.ok(Math.abs(muFromBladeMm(2.3, 0.9) - 0.016249) < 1e-4, 'mu(bladed steel)');
+// Carbon ist viel leichter: runde 2,0 mm Carbon (1600) << Stahl (7850).
+assert.ok(muFromDiameterMm(2.0, 1600) < muFromDiameterMm(2.0, 7850) * 0.3, 'carbon lighter than steel');
+// Flache Carbon-Speiche 2,3 x 0,9 mm: 1600*0.0023*0.0009 ~= 0.003312 kg/m.
+assert.ok(Math.abs(muFromBladeMm(2.3, 0.9, 1600) - 0.0033120) < 1e-5, 'mu(bladed carbon)');
 
 // Note (neues Feature).
 let n = hzToNote(440);

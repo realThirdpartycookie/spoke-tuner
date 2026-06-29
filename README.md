@@ -17,6 +17,9 @@ Pure web app — `index.html` + `app.js` + `i18n.js`, no framework, no build ste
   and tension via the vibrating-string model (Hz → newtons, optional kgf).
 - **Wheel**: per-spoke readings, radial view, side statistics (mean, min/max, spread, % within
   ±10% band).
+- **Spoke profiles**: round (diameter) or **bladed / aero** (width × thickness), with material
+  (steel, stainless, aluminium, titanium, **carbon**) — or enter the mass-per-meter (g/m) directly
+  for anything exotic. The cross-section + density set `mu`, which drives the tension result.
 - **Guide**: causes of nipple failure, roadside fixes, tensioning, the Hz/note method, centering.
 - **6 languages**: German, English, French, Spanish, Italian, Dutch — auto-detected from the
   browser, switchable in the top bar. Number formatting follows the locale.

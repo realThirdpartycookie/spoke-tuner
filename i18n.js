@@ -1,6 +1,5 @@
 'use strict';
-// Auto-generiert aus i18n-Quellen (DE) + Übersetzungen (EN/FR/ES/IT/NL).
-// Reine Daten + Helfer; node-sicher (für selftest.js require-bar).
+// i18n-Daten (DE-Quelle + EN/FR/ES/IT/NL). Reine Daten + Helfer; node-sicher.
 
 const LANGS = ['de', 'en', 'fr', 'es', 'it', 'nl'];
 const LANG_NAMES = { de: 'Deutsch', en: 'English', fr: 'Français', es: 'Español', it: 'Italiano', nl: 'Nederlands' };
@@ -74,7 +73,19 @@ const MESSAGES = {
     "even.band": "Im ±10%-Band",
     "even.footer": "Gleichmäßige Spannung pro Seite ist nicht automatisch zentriert.",
     "material.steel": "Stahl",
-    "aria.wheel": "Laufrad mit {n} Speichen"
+    "aria.wheel": "Laufrad mit {n} Speichen",
+    "material.stainless": "Edelstahl",
+    "material.aluminium": "Aluminium",
+    "material.titanium": "Titan",
+    "material.carbon": "Carbon",
+    "shape.round": "Rund",
+    "shape.bladed": "Flach",
+    "build.material": "Material",
+    "build.shape": "Form",
+    "build.diameter": "Durchmesser",
+    "build.width": "Breite",
+    "build.thickness": "Dicke",
+    "build.massPerM": "Masse pro Meter"
   },
   "en": {
     "nav.measure": "Measure",
@@ -143,7 +154,19 @@ const MESSAGES = {
     "even.band": "Within ±10% band",
     "even.footer": "Uniform tension per side does not automatically mean the wheel is centred.",
     "material.steel": "Steel",
-    "aria.wheel": "Wheel with {n} spokes"
+    "aria.wheel": "Wheel with {n} spokes",
+    "material.stainless": "Stainless steel",
+    "material.aluminium": "Aluminium",
+    "material.titanium": "Titanium",
+    "material.carbon": "Carbon",
+    "shape.round": "Round",
+    "shape.bladed": "Bladed",
+    "build.material": "Material",
+    "build.shape": "Shape",
+    "build.diameter": "Diameter",
+    "build.width": "Width",
+    "build.thickness": "Thickness",
+    "build.massPerM": "Mass per meter"
   },
   "fr": {
     "nav.measure": "Mesurer",
@@ -212,7 +235,19 @@ const MESSAGES = {
     "even.band": "Dans la plage ±10 %",
     "even.footer": "Une tension régulière par côté ne signifie pas automatiquement un centrage.",
     "material.steel": "Acier",
-    "aria.wheel": "Roue à {n} rayons"
+    "aria.wheel": "Roue à {n} rayons",
+    "material.stainless": "Acier inox",
+    "material.aluminium": "Aluminium",
+    "material.titanium": "Titane",
+    "material.carbon": "Carbone",
+    "shape.round": "Rond",
+    "shape.bladed": "Lamé",
+    "build.material": "Matériau",
+    "build.shape": "Forme",
+    "build.diameter": "Diamètre",
+    "build.width": "Largeur",
+    "build.thickness": "Épaisseur",
+    "build.massPerM": "Masse par mètre"
   },
   "es": {
     "nav.measure": "Medir",
@@ -281,7 +316,19 @@ const MESSAGES = {
     "even.band": "En la banda ±10 %",
     "even.footer": "Una tensión uniforme por lado no implica automáticamente que esté centrada.",
     "material.steel": "Acero",
-    "aria.wheel": "Rueda con {n} radios"
+    "aria.wheel": "Rueda con {n} radios",
+    "material.stainless": "Acero inoxidable",
+    "material.aluminium": "Aluminio",
+    "material.titanium": "Titanio",
+    "material.carbon": "Carbono",
+    "shape.round": "Redondo",
+    "shape.bladed": "Plano",
+    "build.material": "Material",
+    "build.shape": "Forma",
+    "build.diameter": "Diámetro",
+    "build.width": "Anchura",
+    "build.thickness": "Grosor",
+    "build.massPerM": "Masa por metro"
   },
   "it": {
     "nav.measure": "Misurazione",
@@ -350,7 +397,19 @@ const MESSAGES = {
     "even.band": "Nella banda ±10%",
     "even.footer": "Una tensione uniforme per lato non significa automaticamente che la ruota sia centrata.",
     "material.steel": "Acciaio",
-    "aria.wheel": "Ruota con {n} raggi"
+    "aria.wheel": "Ruota con {n} raggi",
+    "material.stainless": "Acciaio inox",
+    "material.aluminium": "Alluminio",
+    "material.titanium": "Titanio",
+    "material.carbon": "Carbonio",
+    "shape.round": "Tondo",
+    "shape.bladed": "Lamellare",
+    "build.material": "Materiale",
+    "build.shape": "Forma",
+    "build.diameter": "Diametro",
+    "build.width": "Larghezza",
+    "build.thickness": "Spessore",
+    "build.massPerM": "Massa per metro"
   },
   "nl": {
     "nav.measure": "Meten",
@@ -419,7 +478,19 @@ const MESSAGES = {
     "even.band": "Binnen ±10%-band",
     "even.footer": "Gelijkmatige spanning per zijde is niet automatisch gecentreerd.",
     "material.steel": "Staal",
-    "aria.wheel": "Wiel met {n} spaken"
+    "aria.wheel": "Wiel met {n} spaken",
+    "material.stainless": "Roestvrij staal",
+    "material.aluminium": "Aluminium",
+    "material.titanium": "Titanium",
+    "material.carbon": "Carbon",
+    "shape.round": "Rond",
+    "shape.bladed": "Plat",
+    "build.material": "Materiaal",
+    "build.shape": "Vorm",
+    "build.diameter": "Diameter",
+    "build.width": "Breedte",
+    "build.thickness": "Dikte",
+    "build.massPerM": "Massa per meter"
   }
 };
 

@@ -7,10 +7,17 @@
 const GRAVITY = 9.80665;
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
-/// Lineare Massendichte (kg/m) einer Speiche aus Durchmesser (mm) und Dichte.
+/// Lineare Massendichte (kg/m) einer RUNDEN Speiche aus Durchmesser (mm) und Dichte.
 function muFromDiameterMm(diameterMm, rhoKgM3 = 7850) {
   const r = diameterMm / 2000;
   return rhoKgM3 * Math.PI * r * r;
+}
+
+/// Lineare Massendichte (kg/m) einer FLACHEN/Aero-Speiche aus Breite × Dicke (mm).
+/// Rechteck-Näherung A = w·t; gerundete Blattkanten überschätzen sie leicht
+// ponytail: Rechteck-Näherung; bei Bedarf via Custom-g/m exakt kalibrieren.
+function muFromBladeMm(widthMm, thicknessMm, rhoKgM3 = 7850) {
+  return rhoKgM3 * (widthMm / 1000) * (thicknessMm / 1000);
 }
 
 /// Saitenspannung in Newton: T = 4 * mu * L^2 * f^2.
@@ -124,7 +131,7 @@ function sideStats(tensions, total, band = 0.10) {
 // node-Export für selftest; im Browser ohne Wirkung.
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
-    muFromDiameterMm, tensionNewton, newtonToKgf, hzToNote, median,
+    muFromDiameterMm, muFromBladeMm, tensionNewton, newtonToKgf, hzToNote, median,
     detectPitch, sideStats, GRAVITY,
   };
 }
@@ -134,13 +141,26 @@ if (typeof module !== 'undefined' && module.exports) {
 // =====================================================================
 
 const STORAGE_KEY = 'speichen_state_v1';
-// Dichte (kg/m^3) je Werkstoff-Key. Aktuell nur Stahl genutzt.
-const MATERIALS = { steel: 7850, stainless: 7900, aluminium: 2700, titanium: 4500 };
-const PROFILES = [
-  { diameterMm: 2.0, materialKey: 'steel' },
-  { diameterMm: 1.8, materialKey: 'steel' },
-  { diameterMm: 1.5, materialKey: 'steel' },
-];
+// Dichte (kg/m^3) je Werkstoff. Carbon (CFRP) ~1600 — Streuung via g/m-Anzeige
+// bzw. Custom-Profil kalibrierbar.
+const MATERIALS = { steel: 7850, stainless: 7900, aluminium: 2700, titanium: 4500, carbon: 1600 };
+const MATERIAL_KEYS = ['steel', 'stainless', 'aluminium', 'titanium', 'carbon'];
+const SHAPES = ['round', 'bladed', 'custom'];
+// Standardprofil: 2,0 mm Rundstahl. Bladed-Maße + g/m als sinnvolle Vorgaben mitgeführt.
+const DEFAULT_PROFILE = { shape: 'round', materialKey: 'steel', diameterMm: 2.0, widthMm: 2.3, thicknessMm: 0.9, gPerM: 50 };
+
+/// Sorgt für ein vollständiges Profil (auch beim Laden alter, runder Profile).
+function normalizeProfile(p) {
+  const d = DEFAULT_PROFILE;
+  return {
+    shape: SHAPES.includes(p && p.shape) ? p.shape : 'round',
+    materialKey: (p && MATERIALS[p.materialKey]) ? p.materialKey : 'steel',
+    diameterMm: (p && +p.diameterMm) || d.diameterMm,
+    widthMm: (p && +p.widthMm) || d.widthMm,
+    thicknessMm: (p && +p.thicknessMm) || d.thicknessMm,
+    gPerM: (p && +p.gPerM) || d.gPerM,
+  };
+}
 const SPOKE_COLORS = {
   unmeasured: { fill: '#9aa0a6', text: '#1f1f1f' },
   in: { fill: '#16a34a', text: '#ffffff' },
@@ -154,23 +174,34 @@ function load() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) state = Object.assign(state, JSON.parse(raw));
     if (state.unit === 'kp') state.unit = 'kgf'; // Alt-Code migrieren
+    if (state.wheel && state.wheel.profile) state.wheel.profile = normalizeProfile(state.wheel.profile);
   } catch { /* korrupte Daten ignorieren */ }
 }
 function save() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch { /* ignore */ }
 }
 
-function profileMu(p) { return muFromDiameterMm(p.diameterMm, MATERIALS[p.materialKey] ?? 7850); }
+function profileMu(p) {
+  if (p.shape === 'custom') return (p.gPerM || 0) / 1000;       // direkte g/m-Vorgabe
+  const rho = MATERIALS[p.materialKey] ?? 7850;
+  if (p.shape === 'bladed') return muFromBladeMm(p.widthMm, p.thicknessMm, rho);
+  return muFromDiameterMm(p.diameterMm, rho);                    // rund (Default)
+}
 function profileGperM(p) { return profileMu(p) * 1000; }
-/// Lokalisierter Anzeigename eines Profils, z. B. „2,0 mm Stahl“ / „2.0 mm Steel“.
-function profileName(p) { return `${fmtNum(p.diameterMm, 1)} mm ${t('material.' + (p.materialKey || 'steel'))}`; }
+/// Lokalisierter Anzeigename, z. B. „2,0 mm Stahl“, „2,3×0,9 mm Carbon“, „16,3 g/m“.
+function profileName(p) {
+  const mat = t('material.' + (p.materialKey || 'steel'));
+  if (p.shape === 'custom') return `${fmtNum(p.gPerM, 1)} g/m`;
+  if (p.shape === 'bladed') return `${fmtNum(p.widthMm, 1)}×${fmtNum(p.thicknessMm, 1)} mm ${mat}`;
+  return `${fmtNum(p.diameterMm, 1)} mm ${mat}`;
+}
 
 function createWheel(name, position, spokeCount) {
   const spokes = [];
   for (let i = 0; i < spokeCount; i++) {
     spokes.push({ index: i, side: i % 2 === 0 ? 'left' : 'right', reading: null });
   }
-  return { name, position, profile: { ...PROFILES[0] }, leftLengthMm: 250, rightLengthMm: 250, spokes };
+  return { name, position, profile: normalizeProfile(DEFAULT_PROFILE), leftLengthMm: 250, rightLengthMm: 250, spokes };
 }
 
 function lengthMmForSide(w, side) { return side === 'left' ? w.leftLengthMm : w.rightLengthMm; }
@@ -539,11 +570,7 @@ function renderWheelDetail(el, w) {
     <div class="card">
       <h3>${t('build.title')}</h3>
       <p class="muted small">${t('build.subtitle')}</p>
-      <label class="field">${t('build.profile')}
-        <select id="w-profile">
-          ${PROFILES.map((p, i) => `<option value="${i}" ${p.diameterMm === w.profile.diameterMm ? 'selected' : ''}>${profileName(p)} · ~${fmtNum(Math.round(profileGperM(p)), 0)} g/m</option>`).join('')}
-        </select>
-      </label>
+      ${profileEditorHtml(w)}
       ${lengthInput(t('build.freeLeft'), 'left', w.leftLengthMm)}
       ${lengthInput(t('build.freeRight'), 'right', w.rightLengthMm)}
       <p class="muted small">${t('build.note')}</p>
@@ -570,11 +597,26 @@ function renderWheelDetail(el, w) {
       render();
     }
   });
-  el.querySelector('#w-profile').addEventListener('change', e => {
-    w.profile = { ...PROFILES[parseInt(e.target.value, 10)] };
+  el.querySelectorAll('#w-shape button').forEach(b => b.addEventListener('click', () => {
+    w.profile.shape = b.dataset.shape;
+    save();
+    render();
+  }));
+  const matSel = el.querySelector('#w-material');
+  if (matSel) matSel.addEventListener('change', () => {
+    w.profile.materialKey = matSel.value;
     save();
     render();
   });
+  el.querySelectorAll('.dim-input').forEach(inp => inp.addEventListener('change', () => {
+    let v = parseFloat(inp.value);
+    if (!Number.isFinite(v)) v = parseFloat(inp.min);
+    v = Math.max(parseFloat(inp.min), Math.min(parseFloat(inp.max), v));
+    inp.value = v;
+    w.profile[inp.dataset.dim] = v;
+    save();
+    render();
+  }));
   el.querySelectorAll('.len-input').forEach(inp => {
     inp.addEventListener('change', () => {
       let v = Math.round(parseFloat(inp.value));
@@ -604,6 +646,46 @@ function lengthInput(label, side, value) {
       <input class="len-input" data-side="${side}" type="number" inputmode="numeric"
              min="60" max="400" step="1" value="${Math.round(value)}">
       <span class="num-unit">mm</span>
+    </div>
+  </div>`;
+}
+
+/// Speichenprofil-Editor: Material + Form (rund / flach / direkt g/m) + Maße,
+/// mit Live-Anzeige der Masse pro Meter. Deckt runde UND flache (Carbon-)Speichen ab.
+function profileEditorHtml(w) {
+  const p = w.profile;
+  let dims;
+  if (p.shape === 'custom') {
+    dims = dimRow(t('build.massPerM'), 'gPerM', p.gPerM, 1, 200, 0.1, 'g/m');
+  } else if (p.shape === 'bladed') {
+    dims = dimRow(t('build.width'), 'widthMm', p.widthMm, 0.5, 6, 0.1, 'mm') +
+      dimRow(t('build.thickness'), 'thicknessMm', p.thicknessMm, 0.3, 4, 0.1, 'mm');
+  } else {
+    dims = dimRow(t('build.diameter'), 'diameterMm', p.diameterMm, 1, 5, 0.1, 'mm');
+  }
+  const material = p.shape === 'custom' ? '' : `
+    <label class="field">${t('build.material')}
+      <select id="w-material">
+        ${MATERIAL_KEYS.map(m => `<option value="${m}" ${p.materialKey === m ? 'selected' : ''}>${t('material.' + m)}</option>`).join('')}
+      </select>
+    </label>`;
+  return `
+    <div class="field">${t('build.shape')}
+      <div class="seg" id="w-shape">
+        ${SHAPES.map(sh => `<button data-shape="${sh}" class="${p.shape === sh ? 'sel' : ''}">${sh === 'custom' ? 'g/m' : t('shape.' + sh)}</button>`).join('')}
+      </div>
+    </div>
+    ${material}
+    ${dims}
+    <p class="muted small">≈ ${fmtNum(Math.round(profileGperM(p)), 0)} g/m</p>`;
+}
+
+function dimRow(label, key, value, min, max, step, unit) {
+  return `<div class="field"><span>${label}</span>
+    <div class="num-wrap">
+      <input class="dim-input" data-dim="${key}" type="number" inputmode="decimal"
+             min="${min}" max="${max}" step="${step}" value="${value}">
+      <span class="num-unit">${unit}</span>
     </div>
   </div>`;
 }
