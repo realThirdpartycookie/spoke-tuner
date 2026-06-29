@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="description" content="SpokeTuner — measure bicycle spoke tension with your microphone. Pluck a spoke; the app reads the frequency (Hz), shows the musical note, and computes the tension in newtons. Installable, works offline. Available in DE, EN, FR, ES, IT, NL.">
+  <meta name="theme-color" content="#1c1917">
+  <meta name="mobile-web-app-capable" content="yes">
+  <link rel="icon" href="favicon.png" type="image/png">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+  <link rel="manifest" href="manifest.json">
+  <!-- Social sharing -->
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="SpokeTuner">
+  <meta property="og:title" content="SpokeTuner — bike spoke tension by ear">
+  <meta property="og:description" content="Measure bicycle spoke tension with your microphone: frequency → musical note → newtons. Installable, works offline, 6 languages.">
+  <meta property="og:url" content="https://realthirdpartycookie.github.io/spoke-tuner/">
+  <meta property="og:image" content="https://realthirdpartycookie.github.io/spoke-tuner/icons/Icon-512.png">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="SpokeTuner — bike spoke tension by ear">
+  <meta name="twitter:description" content="Measure bicycle spoke tension with your microphone: frequency → musical note → newtons. Installable, works offline, 6 languages.">
+  <title>SpokeTuner — bike spoke tension meter</title>
+  <style>
+    :root {
+      --bg:#f4f2ee; --bg2:#ebe8e2; --surface:#ffffff; --surface-2:#f0ede7; --surface-3:#e6e1d9;
+      --on-surface:#1c1917; --on-variant:#6b645d;
+      --primary:#d97706; --primary-2:#b45309; --on-primary:#ffffff;
+      --primary-container:#fde6c4; --on-primary-container:#7c3a06; --secondary-container:#f4e7d2;
+      --outline:#ddd6cc; --green:#16a34a; --orange:#ea580c; --red:#dc2626;
+      --shadow:0 8px 28px rgba(40,30,15,.08); --shadow-sm:0 2px 8px rgba(40,30,15,.10);
+      --pill:999px;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg:#1c1917; --bg2:#211d1a; --surface:#292524; --surface-2:#34302b; --surface-3:#40392f;
+        --on-surface:#e7e5e4; --on-variant:#a8a29e;
+        --primary:#f59e0b; --primary-2:#fbbf24; --on-primary:#1c1917;
+        --primary-container:#42301a; --on-primary-container:#fde6c4; --secondary-container:#322a20;
+        --outline:#403a33; --green:#4ade80; --orange:#fb923c; --red:#f87171;
+        --shadow:0 10px 30px rgba(0,0,0,.5); --shadow-sm:0 2px 10px rgba(0,0,0,.45);
+      }
+    }
+    * { box-sizing:border-box; }
+    html,body { margin:0; }
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      color: var(--on-surface);
+      background: linear-gradient(180deg, var(--bg), var(--bg2)) fixed;
+      min-height:100vh; -webkit-text-size-adjust:100%;
+    }
+
+    /* -------- sticky pill top bar -------- */
+    .topbar {
+      position:sticky; top:0; z-index:20;
+      padding: calc(10px + env(safe-area-inset-top)) 16px 10px;
+      background: color-mix(in srgb, var(--bg) 72%, transparent);
+      backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    }
+    .topbar-inner { max-width:600px; margin:0 auto; }
+    .brand-row { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; }
+    .brand { display:flex; align-items:center; gap:8px; font-weight:700; letter-spacing:.2px; font-size:1.02rem; }
+    .brand .dot { color:var(--primary); }
+    .lang-select {
+      font:inherit; font-size:.82rem; font-weight:600; color:var(--on-surface);
+      background:var(--surface-2); border:1px solid var(--outline); border-radius:var(--pill);
+      padding:6px 28px 6px 12px; cursor:pointer; -webkit-appearance:none; appearance:none;
+      background-image: linear-gradient(45deg,transparent 50%,var(--on-variant) 50%),linear-gradient(135deg,var(--on-variant) 50%,transparent 50%);
+      background-position: calc(100% - 14px) 50%, calc(100% - 9px) 50%; background-size:5px 5px,5px 5px; background-repeat:no-repeat;
+    }
+    .tabnav {
+      position:relative; display:grid; grid-template-columns:repeat(3,1fr);
+      background: var(--surface-2); border-radius: var(--pill); padding:5px;
+      box-shadow: inset 0 0 0 1px var(--outline);
+    }
+    .pill-ind {
+      position:absolute; top:5px; bottom:5px; left:5px; width:calc((100% - 10px)/3);
+      border-radius: var(--pill); background: var(--primary);
+      box-shadow:0 4px 12px color-mix(in srgb, var(--primary) 45%, transparent);
+      transform: translateX(calc(var(--i,0) * 100%));
+      transition: transform .3s cubic-bezier(.34,1.2,.5,1);
+    }
+    .nav-btn {
+      position:relative; z-index:1; border:none; background:none; cursor:pointer;
+      padding:10px 6px; border-radius:var(--pill); font-weight:600; font-size:.9rem;
+      color: var(--on-variant); display:flex; align-items:center; justify-content:center; gap:6px;
+      transition: color .25s;
+    }
+    .nav-btn .ico { font-size:1rem; }
+    .nav-btn.active { color: var(--on-primary); }
+
+    main { max-width:600px; margin:0 auto; padding:6px 16px 40px; }
+    .tab { display:block; }
+    .tab[hidden] { display:none; }
+    h2 { margin:6px 2px 14px; font-size:1.4rem; letter-spacing:-.01em; }
+    h3 { margin:0 0 6px; font-size:1.02rem; }
+    p { margin:6px 0; line-height:1.45; }
+    hr { border:none; border-top:1px solid var(--outline); margin:16px 0; }
+    .muted { color: var(--on-variant); }
+    .small { font-size:.82rem; }
+    .primary { color: var(--primary); }
+    b.primary { font-weight:700; }
+
+    .card {
+      background: var(--surface); border:1px solid var(--outline);
+      border-radius:22px; padding:18px; margin:14px 0; box-shadow: var(--shadow);
+    }
+    .row-between { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+    .info-row { display:flex; gap:12px; padding:4px 0; }
+    .info-row span { width:108px; color:var(--on-variant); }
+    .info-row b { font-weight:600; }
+
+    /* -------- gauge -------- */
+    #gauge {
+      position:relative; overflow:hidden; text-align:center; color: var(--on-surface);
+      background: linear-gradient(180deg, var(--surface), var(--surface-2));
+      border:1px solid var(--outline);
+      border-radius:28px; padding:24px 18px; box-shadow: var(--shadow); margin-top:8px;
+    }
+    #gauge.live { box-shadow: var(--shadow), 0 0 0 3px color-mix(in srgb, var(--primary) 55%, transparent); }
+    #gauge-label { font-size:.74rem; letter-spacing:1.5px; text-transform:uppercase; color: var(--on-variant); }
+    .gauge-freq-row { display:flex; align-items:baseline; justify-content:center; gap:6px; }
+    #gauge-freq { font-size:4.3rem; font-weight:800; line-height:1; letter-spacing:-.03em;
+      font-variant-numeric:tabular-nums; color: var(--primary); }
+    .unit-suffix { font-size:1.25rem; font-weight:600; color: var(--on-variant); }
+    #gauge-note {
+      display:inline-flex; align-items:baseline; gap:8px; margin:10px auto 0;
+      padding:5px 14px; border-radius:var(--pill);
+      background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--outline);
+    }
+    #gauge-note .muted { opacity:.6; }
+    .note-name { font-size:1.45rem; font-weight:800; letter-spacing:-.01em; color: var(--on-surface); }
+    .note-cents { font-size:.9rem; font-weight:700; color: var(--on-variant); }
+    .note-cents.ok { color: var(--primary); }
+
+    /* cents tuner */
+    .tuner { max-width:260px; margin:14px auto 4px; }
+    .tuner-track { position:relative; height:10px; border-radius:var(--pill); background: var(--surface-3); }
+    .tuner-center { position:absolute; left:50%; top:-3px; bottom:-3px; width:2px; transform:translateX(-50%);
+      background: var(--on-variant); opacity:.6; border-radius:2px; }
+    .tuner-dot { position:absolute; top:50%; left:50%; width:16px; height:16px; border-radius:50%;
+      transform:translate(-50%,-50%); background: var(--red); border:2px solid var(--surface);
+      box-shadow:0 1px 5px rgba(0,0,0,.35); transition:left .12s ease, background .25s; }
+    .tuner.in-tune .tuner-dot { background: var(--green); }
+    .tuner-scale { display:flex; justify-content:space-between; font-size:.66rem; color: var(--on-variant); margin-top:5px; }
+
+    .tension-box { display:inline-block; margin-top:16px; padding:9px 20px; border-radius:18px; background: var(--surface-2); }
+    .tension-box .muted { font-size:.74rem; letter-spacing:.5px; text-transform:uppercase; }
+    #gauge-tension { font-size:1.55rem; font-weight:800; font-variant-numeric:tabular-nums; color: var(--on-surface); }
+    .level-wrap { margin-top:16px; }
+    .level-track { height:8px; border-radius:var(--pill); background: var(--surface-3); overflow:hidden; }
+    #level-bar { height:100%; width:0; background: var(--primary); border-radius:var(--pill); transition:width .08s linear; }
+    #gauge-hint { margin-top:14px; font-weight:600; min-height:1.2rem; color: var(--on-surface); }
+
+    /* -------- buttons (pills) -------- */
+    button { font:inherit; }
+    #listen-btn, .btn-filled, .btn-outline {
+      width:100%; border-radius:var(--pill); padding:15px; font-weight:700; cursor:pointer;
+      border:none; transition:transform .08s, filter .15s, background .2s; box-shadow: var(--shadow-sm);
+    }
+    #listen-btn:active, .btn-filled:active, .btn-outline:active { transform:scale(.985); }
+    #listen-btn { background: var(--primary); color: var(--on-primary); font-size:1.12rem; margin:18px 0 12px; }
+    #listen-btn.listening { background: var(--red); }
+    .btn-filled { background: var(--primary); color: var(--on-primary); margin-top:14px; }
+    .btn-outline { background: var(--surface); color: var(--primary); box-shadow: inset 0 0 0 1.5px var(--primary); }
+    .btn-outline.small { width:auto; padding:9px 16px; font-size:.85rem; }
+
+    /* -------- fields -------- */
+    .field { display:block; margin:14px 0; font-size:.9rem; color:var(--on-variant); }
+    .field input[type=text], .field select {
+      display:block; width:100%; margin-top:7px; padding:12px 14px; font:inherit;
+      background: var(--surface); color: var(--on-surface);
+      border:1px solid var(--outline); border-radius:14px; -webkit-appearance:none; appearance:none;
+    }
+    .field select { background-image: linear-gradient(45deg,transparent 50%,var(--on-variant) 50%),linear-gradient(135deg,var(--on-variant) 50%,transparent 50%);
+      background-position: calc(100% - 18px) 18px, calc(100% - 13px) 18px; background-size:5px 5px,5px 5px; background-repeat:no-repeat; }
+    input[type=range] { width:100%; margin-top:10px; accent-color: var(--primary); }
+    .num-wrap { position:relative; margin-top:7px; }
+    .field input[type=number] {
+      display:block; width:100%; padding:12px 46px 12px 14px; font:inherit; font-weight:700;
+      background: var(--surface); color: var(--on-surface);
+      border:1px solid var(--outline); border-radius:14px; -webkit-appearance:none; appearance:none;
+    }
+    .field input[type=number]:focus { outline:none; border-color: var(--primary); }
+    .field input[type=number]::-webkit-outer-spin-button,
+    .field input[type=number]::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
+    .num-unit { position:absolute; right:14px; top:50%; transform:translateY(-50%);
+      color: var(--on-variant); font-size:.85rem; font-weight:600; pointer-events:none; }
+
+    /* segmented pill control */
+    .seg { display:inline-flex; margin-top:7px; background:var(--surface-2); border-radius:var(--pill);
+      padding:4px; box-shadow: inset 0 0 0 1px var(--outline); }
+    .seg button { padding:8px 18px; background:transparent; color:var(--on-variant); border:none; cursor:pointer;
+      border-radius:var(--pill); font-weight:600; transition:.2s; }
+    .seg button.sel { background: var(--primary); color: var(--on-primary); box-shadow: var(--shadow-sm); }
+
+    /* -------- wheel -------- */
+    .wheel-card { text-align:center; }
+    .wheel-svg { width:100%; max-width:380px; height:auto; }
+    .spoke-dot { cursor:pointer; }
+    .legend { display:flex; gap:18px; justify-content:center; flex-wrap:wrap; margin-top:10px; font-size:.82rem; color:var(--on-variant); }
+    .legend i { display:inline-block; width:11px; height:11px; border-radius:50%; margin-right:6px; vertical-align:-1px; }
+
+    /* reading + stats */
+    .reading { margin-top:10px; }
+    .reading-main { font-size:1.9rem; font-weight:800; letter-spacing:-.02em; }
+    .chips { display:flex; flex-wrap:wrap; gap:8px; margin:10px 0; }
+    .chip { background: var(--surface-2); border-radius:var(--pill); padding:7px 13px; font-size:.85rem; }
+    .chip i { color: var(--on-variant); font-style:normal; }
+    .bar { height:10px; border-radius:var(--pill); background: var(--surface-2); overflow:hidden; margin-top:6px; }
+    .bar > div { height:100%; border-radius:var(--pill); }
+    .note-box { background: var(--secondary-container); color: var(--on-primary-container); border-radius:16px; padding:14px; }
+
+    /* -------- guide -------- */
+    details.guide { background: var(--surface); border:1px solid var(--outline); border-radius:20px;
+      margin:10px 0; overflow:hidden; box-shadow: var(--shadow); }
+    details.guide > summary { padding:16px 18px; font-weight:700; cursor:pointer; list-style:none;
+      display:flex; gap:10px; align-items:center; }
+    details.guide > summary::-webkit-details-marker { display:none; }
+    details.guide > summary::after { content:"⌄"; margin-left:auto; color:var(--primary); font-size:1.2rem;
+      transition:transform .2s; line-height:1; }
+    details.guide[open] > summary::after { transform:rotate(180deg); }
+    .guide-body { padding:0 18px 16px; }
+    .guide-body li { margin:7px 0; line-height:1.45; }
+    .guide-note { background: var(--secondary-container); color:var(--on-primary-container); border-radius:14px;
+      padding:14px; margin-top:12px; white-space:pre-line; list-style:none; }
+
+    /* toast */
+    #toast { position:fixed; left:50%; bottom:calc(24px + env(safe-area-inset-bottom));
+      transform:translateX(-50%) translateY(20px); background:#1f2a1f; color:#fff;
+      padding:12px 20px; border-radius:var(--pill); font-size:.9rem; font-weight:600;
+      box-shadow: var(--shadow); opacity:0; pointer-events:none; transition:.22s; z-index:30; }
+    #toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="topbar-inner">
+      <div class="brand-row">
+        <div class="brand"><span class="dot">◉</span> SpokeTuner</div>
+        <select id="lang-select" class="lang-select" aria-label="Sprache / Language"></select>
+      </div>
+      <div class="tabnav" id="tabnav" style="--i:0">
+        <span class="pill-ind"></span>
+        <button class="nav-btn active" data-tab="measure"><span class="ico">📈</span><span data-i18n="nav.measure">Messen</span></button>
+        <button class="nav-btn" data-tab="wheel"><span class="ico">🛞</span><span data-i18n="nav.wheel">Laufrad</span></button>
+        <button class="nav-btn" data-tab="guide"><span class="ico">📖</span><span data-i18n="nav.guide">Ratgeber</span></button>
+      </div>
+    </div>
+  </div>
+
+  <main>
+    <!-- ---------------- Messen ---------------- -->
+    <section class="tab" id="tab-measure">
+      <div id="gauge">
+        <div id="gauge-label" data-i18n="gauge.freq">Frequenz</div>
+        <div class="gauge-freq-row"><span id="gauge-freq">--</span><span class="unit-suffix">Hz</span></div>
+        <div id="gauge-note"><span class="muted">—</span></div>
+        <div class="tuner" id="tuner" hidden>
+          <div class="tuner-track"><span class="tuner-center"></span><span class="tuner-dot" id="tuner-dot"></span></div>
+          <div class="tuner-scale"><span>♭ −50</span><span>0 ct</span><span>+50 ♯</span></div>
+        </div>
+        <div class="tension-box">
+          <div class="muted" data-i18n="gauge.tension">Spannung</div>
+          <div id="gauge-tension">--</div>
+        </div>
+        <div class="level-wrap" hidden>
+          <div class="level-track"><div id="level-bar"></div></div>
+        </div>
+        <div id="gauge-hint" data-i18n="hint.idle">Tippe auf „Lauschen“ und zupfe dann die Speiche an.</div>
+      </div>
+      <button id="listen-btn">🎤  Lauschen</button>
+      <div id="apply-section"></div>
+      <div class="card" id="measure-context"></div>
+    </section>
+
+    <!-- ---------------- Laufrad ---------------- -->
+    <section class="tab" id="tab-wheel" hidden>
+      <div id="wheel-content"></div>
+    </section>
+
+    <!-- ---------------- Ratgeber ---------------- -->
+    <section class="tab" id="tab-guide" hidden>
+      <h2 data-i18n="nav.guide">Ratgeber</h2>
+      <div id="guide-content"></div>
+    </section>
+  </main>
+
+  <div id="toast"></div>
+  <script src="i18n.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

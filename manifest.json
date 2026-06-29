@@ -1,0 +1,17 @@
+{
+  "name": "SpokeTuner",
+  "short_name": "SpokeTuner",
+  "description": "Measure bicycle spoke tension with your microphone — frequency, musical note and newtons.",
+  "lang": "en",
+  "dir": "ltr",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#f4f2ee",
+  "theme_color": "#d97706",
+  "icons": [
+    { "src": "icons/Icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/Icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/Icon-maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/Icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

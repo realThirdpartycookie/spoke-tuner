@@ -1,0 +1,6 @@
+_site/
+.DS_Store
+# Local editor/agent tooling.
+.claude/
+# Dead Flutter version kept locally for reference; not part of the web app.
+archive/
