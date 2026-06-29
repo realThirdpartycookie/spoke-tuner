@@ -1,7 +1,8 @@
 // Runnable check for the pure math: `node selftest.js`
 const assert = require('assert');
 const {
-  muFromDiameterMm, muFromBladeMm, tensionNewton, newtonToKgf, hzToNote, median, sideStats, GRAVITY,
+  muFromDiameterMm, muFromBladeMm, tensionNewton, newtonToKgf, hzToNote, median, sideStats,
+  stableReading, GRAVITY,
 } = require('./app.js');
 
 // Physik (Port der Flutter-Tests).
@@ -40,6 +41,11 @@ assert.ok(Math.abs(s.avg - 1100) < 1e-9, 'avg');
 assert.strictEqual(s.min, 1000);
 assert.strictEqual(s.max, 1400);
 assert.strictEqual(s.within, 3, '3 of 4 within +/-10% of mean');
+
+// stableReading: erst genug Proben, dann nur bei engem Cluster ein Ergebnis.
+assert.strictEqual(stableReading([420, 421, 420], 8), null, 'too few samples -> null');
+assert.ok(Math.abs(stableReading(Array(10).fill(0).map((_, i) => 420 + (i % 2)), 8) - 420.5) < 1, 'tight cluster -> median');
+assert.strictEqual(stableReading([420, 600, 421, 590, 419, 610, 422, 580, 421, 600], 8), null, 'noisy -> null');
 
 // i18n: jede Sprache hat exakt dieselben Schlüssel + gleiche Guide-Struktur wie DE.
 const { LANGS, MESSAGES, GUIDE } = require('./i18n.js');

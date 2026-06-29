@@ -47,6 +47,17 @@ function median(values) {
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
 
+/// „Statistisch sinnvolle“ Messung: genug Proben UND eng geclustert.
+/// Liefert den Median-Hz, wenn der robuste Spread (MAD) <= relSpread*Median liegt, sonst null.
+function stableReading(samples, minSamples = 8, relSpread = 0.02) {
+  if (samples.length < minSamples) return null;
+  const recent = samples.slice(-minSamples);
+  const m = median(recent);
+  if (!(m > 0)) return null;
+  const mad = median(recent.map(v => Math.abs(v - m))); // robust gegen Einzelausreißer
+  return (mad / m) <= relSpread ? m : null;
+}
+
 /// Autokorrelation -> Grundfrequenz. clarity 0..1 = Periodizität, rms = Pegel.
 /// Port des klassischen Web-Audio-Pitchdetektors (ACF + Parabel-Interpolation).
 // ponytail: O(n^2)-ACF auf <=4096 Samples, gedrosselt aufgerufen; bei
@@ -132,7 +143,7 @@ function sideStats(tensions, total, band = 0.10) {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     muFromDiameterMm, muFromBladeMm, tensionNewton, newtonToKgf, hzToNote, median,
-    detectPitch, sideStats, GRAVITY,
+    detectPitch, sideStats, stableReading, GRAVITY,
   };
 }
 
@@ -344,6 +355,9 @@ const Pitch = {
 const Measure = {
   listening: false,
   samples: [],
+  recent: [],    // gleitendes Fenster für Auto-Erfassung
+  armed: true,   // erst nach einer Tonpause (nächster Anzupfer) wieder erfassen
+  auto: false,   // Auto-Weiterschalten – nur sinnvoll mit Laufrad
   resultHz: null,
   liveHz: 0,
   stopTimer: 0,
@@ -352,9 +366,12 @@ const Measure = {
   async toggle() {
     if (this.listening) { await this.finish(true); return; }
     this.samples = [];
+    this.recent = [];
+    this.armed = true;
+    this.auto = !!(state.wheel && state.wheel.spokes.length);
     this.resultHz = null;
     this.liveHz = 0;
-    setHint(t('hint.start'));
+    setHint(this.auto ? t('hint.autoListen', { n: state.selectedSpokeIndex + 1 }) : t('hint.start'));
     this.listening = true;
     updateButton();
     try {
@@ -373,8 +390,38 @@ const Measure = {
     if (!this.listening) return;
     if (r.freq > 0) this.liveHz = r.freq;
     const level = Math.min(1, r.rms * 4);
-    if (r.freq >= 80 && r.freq <= 1500 && r.clarity > 0.9) this.samples.push(r.freq);
+    const good = r.freq >= 80 && r.freq <= 1500 && r.clarity > 0.9;
     updateGauge(r.freq > 0 ? r.freq : 0, level, true);
+
+    if (!this.auto) { if (good) this.samples.push(r.freq); return; }
+
+    // Auto-Modus: Tonpause „scharfschalten“, klarer Anzupfer füllt das Fenster.
+    if (!good) { this.recent = []; this.armed = true; return; }
+    if (!this.armed) return; // Ausklingen des erfassten Tons ignorieren
+    this.recent.push(r.freq);
+    if (this.recent.length > 24) this.recent.shift();
+    const m = stableReading(this.recent);
+    if (m != null) this.lockReading(m);
+  },
+
+  /// Stabile Messung übernehmen, zur nächsten Speiche schalten, weiter lauschen.
+  lockReading(hz) {
+    this.recent = [];
+    this.armed = false; // bis zur nächsten Tonpause nicht erneut erfassen
+    const spoke = selectedSpoke();
+    if (!spoke) return;
+    spoke.reading = {
+      freqHz: hz,
+      tensionN: tensionForHzOnSide(state.wheel, hz, spoke.side),
+      timestamp: Date.now(),
+    };
+    save();
+    const done = spoke.index + 1;
+    const count = state.wheel.spokes.length;
+    state.selectedSpokeIndex = (state.selectedSpokeIndex + 1) % count;
+    render();
+    setHint(t('hint.autoListen', { n: state.selectedSpokeIndex + 1 }));
+    toast(t('toast.applied', { n: done }));
   },
 
   async finish(aborted) {
@@ -383,6 +430,12 @@ const Measure = {
     await Pitch.stop();
     this.listening = false;
     updateButton();
+
+    if (this.auto) { // Werte wurden schon live übernommen
+      setHint(t('hint.stopped'));
+      updateGauge(0, 0, false);
+      return;
+    }
 
     const result = median(this.samples);
     if (result != null) {
