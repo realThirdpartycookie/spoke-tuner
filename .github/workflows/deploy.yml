@@ -31,7 +31,7 @@ jobs:
       # Static site: ship only the web files (relative paths work under /<repo>/).
       - run: |
           mkdir _site
-          cp index.html app.js i18n.js sw.js manifest.json favicon.png _site/
+          cp index.html app.js i18n.js sw.js manifest.json favicon.svg favicon.png _site/
           cp -r icons _site/
           touch _site/.nojekyll
       - uses: actions/upload-pages-artifact@v3
