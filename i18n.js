@@ -20,7 +20,6 @@ const MESSAGES = {
     "hint.detected": "Ton erkannt. Wert kann übernommen werden.",
     "hint.aborted": "Messung abgebrochen.",
     "hint.noClear": "Kein klarer Ton erkannt.",
-    "hint.autoListen": "Speiche {n} anzupfen … wird automatisch übernommen.",
     "btn.listen": "Lauschen",
     "btn.stop": "Stoppen",
     "unit.N": "N",
@@ -86,7 +85,15 @@ const MESSAGES = {
     "build.diameter": "Durchmesser",
     "build.width": "Breite",
     "build.thickness": "Dicke",
-    "build.massPerM": "Masse pro Meter"
+    "build.massPerM": "Masse pro Meter",
+    "hint.captured": "Ton erfasst – Messung gestoppt.",
+    "hint.autoProgress": "Speiche {n} anzupfen … wird automatisch übernommen ({done}/{total}).",
+    "toast.allDone": "Alle {total} Speichen gemessen.",
+    "build.targetLeft": "Zielspannung links",
+    "build.targetRight": "Zielspannung rechts",
+    "build.targetHint": "0 = kein Ziel. Ohne Ziel gilt der Seitendurchschnitt für Färbung und Band.",
+    "gauge.target": "Ziel",
+    "aria.spectrum": "Live-Frequenzspektrum"
   },
   "en": {
     "nav.measure": "Measure",
@@ -102,7 +109,6 @@ const MESSAGES = {
     "hint.detected": "Note detected. Value can be applied.",
     "hint.aborted": "Measurement cancelled.",
     "hint.noClear": "No clear note detected.",
-    "hint.autoListen": "Pluck spoke {n} … captured automatically.",
     "btn.listen": "Listen",
     "btn.stop": "Stop",
     "unit.N": "N",
@@ -168,7 +174,15 @@ const MESSAGES = {
     "build.diameter": "Diameter",
     "build.width": "Width",
     "build.thickness": "Thickness",
-    "build.massPerM": "Mass per meter"
+    "build.massPerM": "Mass per meter",
+    "hint.captured": "Note captured – measurement stopped.",
+    "hint.autoProgress": "Pluck spoke {n} … captured automatically ({done}/{total}).",
+    "toast.allDone": "All {total} spokes measured.",
+    "build.targetLeft": "Target tension left",
+    "build.targetRight": "Target tension right",
+    "build.targetHint": "0 = no target. Without a target, the side average is used for colouring and band.",
+    "gauge.target": "Target",
+    "aria.spectrum": "Live frequency spectrum"
   },
   "fr": {
     "nav.measure": "Mesurer",
@@ -184,7 +198,6 @@ const MESSAGES = {
     "hint.detected": "Son détecté. La valeur peut être appliquée.",
     "hint.aborted": "Mesure interrompue.",
     "hint.noClear": "Aucun son clair détecté.",
-    "hint.autoListen": "Pince le rayon {n}… capture automatique.",
     "btn.listen": "Écouter",
     "btn.stop": "Arrêter",
     "unit.N": "N",
@@ -250,7 +263,15 @@ const MESSAGES = {
     "build.diameter": "Diamètre",
     "build.width": "Largeur",
     "build.thickness": "Épaisseur",
-    "build.massPerM": "Masse par mètre"
+    "build.massPerM": "Masse par mètre",
+    "hint.captured": "Son capturé – mesure arrêtée.",
+    "hint.autoProgress": "Pince le rayon {n}… capture automatique ({done}/{total}).",
+    "toast.allDone": "Les {total} rayons ont tous été mesurés.",
+    "build.targetLeft": "Tension cible gauche",
+    "build.targetRight": "Tension cible droite",
+    "build.targetHint": "0 = pas de cible. Sans cible, la moyenne du côté sert de référence pour la coloration et la plage.",
+    "gauge.target": "Cible",
+    "aria.spectrum": "Spectre de fréquences en direct"
   },
   "es": {
     "nav.measure": "Medir",
@@ -266,7 +287,6 @@ const MESSAGES = {
     "hint.detected": "Tono detectado. Se puede aplicar el valor.",
     "hint.aborted": "Medición cancelada.",
     "hint.noClear": "No se detectó ningún tono claro.",
-    "hint.autoListen": "Pulsa el radio {n}… se captura automáticamente.",
     "btn.listen": "Escuchar",
     "btn.stop": "Detener",
     "unit.N": "N",
@@ -332,7 +352,15 @@ const MESSAGES = {
     "build.diameter": "Diámetro",
     "build.width": "Anchura",
     "build.thickness": "Grosor",
-    "build.massPerM": "Masa por metro"
+    "build.massPerM": "Masa por metro",
+    "hint.captured": "Tono capturado: medición detenida.",
+    "hint.autoProgress": "Pulsa el radio {n}… se captura automáticamente ({done}/{total}).",
+    "toast.allDone": "Se han medido los {total} radios.",
+    "build.targetLeft": "Tensión objetivo izquierda",
+    "build.targetRight": "Tensión objetivo derecha",
+    "build.targetHint": "0 = sin objetivo. Sin objetivo, se usa la media del lado para el color y la banda.",
+    "gauge.target": "Objetivo",
+    "aria.spectrum": "Espectro de frecuencias en vivo"
   },
   "it": {
     "nav.measure": "Misurazione",
@@ -348,7 +376,6 @@ const MESSAGES = {
     "hint.detected": "Suono rilevato. Il valore può essere acquisito.",
     "hint.aborted": "Misurazione interrotta.",
     "hint.noClear": "Nessun suono chiaro rilevato.",
-    "hint.autoListen": "Pizzica il raggio {n} … acquisizione automatica.",
     "btn.listen": "Ascolta",
     "btn.stop": "Ferma",
     "unit.N": "N",
@@ -414,7 +441,15 @@ const MESSAGES = {
     "build.diameter": "Diametro",
     "build.width": "Larghezza",
     "build.thickness": "Spessore",
-    "build.massPerM": "Massa per metro"
+    "build.massPerM": "Massa per metro",
+    "hint.captured": "Suono acquisito – misurazione fermata.",
+    "hint.autoProgress": "Pizzica il raggio {n} … acquisizione automatica ({done}/{total}).",
+    "toast.allDone": "Tutti i {total} raggi misurati.",
+    "build.targetLeft": "Tensione obiettivo sinistra",
+    "build.targetRight": "Tensione obiettivo destra",
+    "build.targetHint": "0 = nessun obiettivo. Senza obiettivo, per la colorazione e la banda si usa la media del lato.",
+    "gauge.target": "Obiettivo",
+    "aria.spectrum": "Spettro di frequenza in tempo reale"
   },
   "nl": {
     "nav.measure": "Meten",
@@ -430,7 +465,6 @@ const MESSAGES = {
     "hint.detected": "Toon herkend. Waarde kan worden overgenomen.",
     "hint.aborted": "Meting afgebroken.",
     "hint.noClear": "Geen duidelijke toon herkend.",
-    "hint.autoListen": "Spaak {n} aantokkelen … wordt automatisch overgenomen.",
     "btn.listen": "Luisteren",
     "btn.stop": "Stoppen",
     "unit.N": "N",
@@ -496,7 +530,15 @@ const MESSAGES = {
     "build.diameter": "Diameter",
     "build.width": "Breedte",
     "build.thickness": "Dikte",
-    "build.massPerM": "Massa per meter"
+    "build.massPerM": "Massa per meter",
+    "hint.captured": "Toon overgenomen – meting gestopt.",
+    "hint.autoProgress": "Spaak {n} aantokkelen … wordt automatisch overgenomen ({done}/{total}).",
+    "toast.allDone": "Alle {total} spaken gemeten.",
+    "build.targetLeft": "Doelspanning links",
+    "build.targetRight": "Doelspanning rechts",
+    "build.targetHint": "0 = geen doel. Zonder doel geldt het zijgemiddelde voor kleuring en band.",
+    "gauge.target": "Doel",
+    "aria.spectrum": "Live-frequentiespectrum"
   }
 };
 
@@ -551,6 +593,16 @@ const GUIDE = {
         "Gleichheit nur INNERHALB derselben Seite anstreben (Ziel: max. ±10 % Abweichung vom Mittel).",
         "Merksatz: Zentrierung bestimmt, WO die Felge steht; gleichmäßige Spannung, WIE LANGE sie hält."
       ]
+    },
+    {
+      "title": "📏 Wie genau ist die akustische Messung?",
+      "points": [
+        "Die Frequenzmessung selbst ist sehr genau – die berechnete Spannung hängt aber von freier Länge und Masse pro Meter ab.",
+        "Fehler in der freien Länge gehen quadratisch ein: 5 % Längenfehler ≈ 10 % Spannungsfehler.",
+        "Dämpfung durch Speichenkreuzungen, Nippelmagnete oder anliegende Finger verfälscht den Ton – die Speiche frei schwingen lassen.",
+        "Für absolute Werte einmalig gegen ein mechanisches Tensiometer abgleichen; für Gleichmäßigkeit reicht die App allein."
+      ],
+      "note": "Faustregel: Relativvergleiche (Speiche zu Speiche) sind zuverlässiger als absolute Newton-Werte."
     }
   ],
   "en": [
@@ -603,6 +655,16 @@ const GUIDE = {
         "Aim for uniformity only WITHIN the same side (target: max. ±10 % deviation from the mean).",
         "Rule of thumb: centring determines WHERE the rim sits; uniform tension, HOW LONG it holds."
       ]
+    },
+    {
+      "title": "📏 How accurate is the acoustic measurement?",
+      "points": [
+        "The frequency measurement itself is very precise – but the computed tension depends on the free length and the mass per metre.",
+        "Errors in the free length enter squared: a 5% length error means roughly a 10% tension error.",
+        "Damping from spoke crossings, nipple magnets or a touching finger skews the note – let the spoke ring freely.",
+        "For absolute values, calibrate once against a mechanical tensiometer; for uniformity the app alone is enough."
+      ],
+      "note": "Rule of thumb: relative comparisons (spoke to spoke) are more reliable than absolute newton values."
     }
   ],
   "fr": [
@@ -655,6 +717,16 @@ const GUIDE = {
         "Ne vise l’égalité qu’À L’INTÉRIEUR d’un même côté (objectif : max. ±10 % d’écart par rapport à la moyenne).",
         "À retenir : le centrage détermine OÙ se trouve la jante ; une tension régulière, COMBIEN DE TEMPS elle tient."
       ]
+    },
+    {
+      "title": "📏 Quelle est la précision de la mesure acoustique ?",
+      "points": [
+        "La mesure de fréquence elle-même est très précise – mais la tension calculée dépend de la longueur libre et de la masse par mètre.",
+        "Les erreurs sur la longueur libre interviennent au carré : 5 % d’erreur de longueur ≈ 10 % d’erreur de tension.",
+        "L’amortissement dû aux croisements de rayons, aux aimants d’écrou ou à un doigt en contact fausse le son – laisse le rayon vibrer librement.",
+        "Pour des valeurs absolues, étalonne une fois avec un tensiomètre mécanique ; pour la régularité, l’appli suffit à elle seule."
+      ],
+      "note": "Règle empirique : les comparaisons relatives (rayon à rayon) sont plus fiables que les valeurs absolues en newtons."
     }
   ],
   "es": [
@@ -707,6 +779,16 @@ const GUIDE = {
         "Busca la igualdad solo DENTRO del mismo lado (objetivo: máx. ±10 % de desviación respecto a la media).",
         "Regla mnemotécnica: el centrado determina DÓNDE queda la llanta; la tensión uniforme, CUÁNTO dura."
       ]
+    },
+    {
+      "title": "📏 ¿Qué precisión tiene la medición acústica?",
+      "points": [
+        "La medición de la frecuencia en sí es muy precisa, pero la tensión calculada depende de la longitud libre y de la masa por metro.",
+        "Los errores en la longitud libre entran al cuadrado: un 5 % de error de longitud supone aproximadamente un 10 % de error de tensión.",
+        "La amortiguación por los cruces de radios, los imanes en las cabecillas o un dedo apoyado falsea el tono: deja que el radio vibre libremente.",
+        "Para valores absolutos, calibra una vez contra un tensiómetro mecánico; para la uniformidad basta con la app."
+      ],
+      "note": "Regla práctica: las comparaciones relativas (radio a radio) son más fiables que los valores absolutos en newtons."
     }
   ],
   "it": [
@@ -759,6 +841,16 @@ const GUIDE = {
         "Punta all'uniformità solo ALL'INTERNO dello stesso lato (obiettivo: max. ±10 % di scostamento dalla media).",
         "Da ricordare: la centratura determina DOVE si trova il cerchio; la tensione uniforme PER QUANTO TEMPO regge."
       ]
+    },
+    {
+      "title": "📏 Quanto è precisa la misurazione acustica?",
+      "points": [
+        "La misurazione della frequenza in sé è molto precisa – ma la tensione calcolata dipende dalla lunghezza libera e dalla massa al metro.",
+        "Gli errori sulla lunghezza libera incidono al quadrato: un errore di lunghezza del 5% comporta circa il 10% di errore sulla tensione.",
+        "Lo smorzamento dovuto agli incroci dei raggi, ai magneti sui nippli o a un dito appoggiato falsa il suono – lascia oscillare il raggio liberamente.",
+        "Per i valori assoluti, calibra una volta con un tensiometro meccanico; per l'uniformità basta l'app da sola."
+      ],
+      "note": "Regola pratica: i confronti relativi (raggio con raggio) sono più affidabili dei valori assoluti in newton."
     }
   ],
   "nl": [
@@ -811,6 +903,16 @@ const GUIDE = {
         "Streef gelijkheid alleen BINNEN dezelfde zijde na (doel: max. ±10 % afwijking van het gemiddelde).",
         "Onthoud: centreren bepaalt WAAR de velg staat; gelijkmatige spanning HOELANG dit standhoudt."
       ]
+    },
+    {
+      "title": "📏 Hoe nauwkeurig is de akoestische meting?",
+      "points": [
+        "De frequentiemeting zelf is zeer nauwkeurig – de berekende spanning hangt echter af van de vrije lengte en de massa per meter.",
+        "Fouten in de vrije lengte tellen kwadratisch mee: 5 % lengtefout ≈ 10 % spanningsfout.",
+        "Demping door spaakkruisingen, nippelmagneten of een aanliggende vinger vervalst de toon – laat de spaak vrij trillen.",
+        "IJk voor absolute waarden eenmalig tegen een mechanische tensiometer; voor gelijkmatigheid volstaat de app alleen."
+      ],
+      "note": "Vuistregel: relatieve vergelijkingen (spaak met spaak) zijn betrouwbaarder dan absolute newtonwaarden."
     }
   ]
 };

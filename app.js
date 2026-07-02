@@ -29,6 +29,11 @@ function newtonToKgf(n) {
   return n / GRAVITY;
 }
 
+/// Umkehrung von tensionNewton: Frequenz (Hz), bei der die Speiche die Zielspannung hat.
+function freqForTension(tN, lengthM, muKgM) {
+  return Math.sqrt(tN / (4 * muKgM)) / lengthM;
+}
+
 /// Hz -> Notenname mit Oktave und Cent-Abweichung. null bei f<=0.
 function hzToNote(freqHz) {
   if (!(freqHz > 0)) return null;
@@ -113,8 +118,27 @@ function detectPitch(buf, sampleRate) {
   return { freq, clarity, rms };
 }
 
+/// Oktavfehler-Schutz: hat das Spektrum bei f/2 einen klaren Peak, war f
+/// vermutlich die 2. Harmonische -> auf den Grundton falten.
+/// spec = Byte-Spektrum (0..255). ACHTUNG dB-Skala: Byte = 255*(dB+100)/70
+/// (Analyser-Defaults -100..-30 dB), d. h. Byte-DIFFERENZ = dB-Abstand.
+// ponytail: konservative Heuristik – Sub-Peak muss laut (>= ~-65 dBFS) UND
+// nah am Hauptpeak (<= ~8 dB darunter) sein. Falsches Falten wäre schlimmer
+// (speichert 1/4-Spannung) als ein verpasster seltener ACF-Oktavfehler.
+function correctOctave(freq, spec, binHz) {
+  if (!(freq > 0) || !spec || !(binHz > 0)) return freq;
+  const mag = (f) => {
+    const i = Math.round(f / binHz);
+    return i >= 1 && i + 1 < spec.length ? Math.max(spec[i - 1], spec[i], spec[i + 1]) : 0;
+  };
+  const half = freq / 2;
+  return half >= 60 && mag(half) >= 128 && mag(half) >= mag(freq) - 30 ? half : freq;
+}
+
 /// Statistik einer Laufradseite (Port von Wheel.statsFor).
-function sideStats(tensions, total, band = 0.10) {
+/// ref > 0 (Zielspannung): das ±band-Fenster zählt gegen das Ziel statt gegen
+/// das Seitenmittel – konsistent zur Speichen-Färbung im Rad-SVG.
+function sideStats(tensions, total, band = 0.10, ref = 0) {
   const measured = tensions.length;
   if (!measured) {
     return { total, measured: 0, avg: 0, min: 0, max: 0, std: 0, within: 0, pct: 0 };
@@ -126,11 +150,12 @@ function sideStats(tensions, total, band = 0.10) {
     if (t > max) max = t;
   }
   const avg = sum / measured;
+  const base = ref > 0 ? ref : avg;
   let varSum = 0, within = 0;
   for (const t of tensions) {
     const dd = t - avg;
     varSum += dd * dd;
-    if (Math.abs(dd) <= avg * band) within++;
+    if (Math.abs(t - base) <= base * band) within++;
   }
   return {
     total, measured, avg, min, max,
@@ -142,8 +167,8 @@ function sideStats(tensions, total, band = 0.10) {
 // node-Export für selftest; im Browser ohne Wirkung.
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
-    muFromDiameterMm, muFromBladeMm, tensionNewton, newtonToKgf, hzToNote, median,
-    detectPitch, sideStats, stableReading, GRAVITY,
+    muFromDiameterMm, muFromBladeMm, tensionNewton, newtonToKgf, freqForTension, hzToNote,
+    median, detectPitch, correctOctave, sideStats, stableReading, GRAVITY,
   };
 }
 
@@ -186,6 +211,10 @@ function load() {
     if (raw) state = Object.assign(state, JSON.parse(raw));
     if (state.unit === 'kp') state.unit = 'kgf'; // Alt-Code migrieren
     if (state.wheel && state.wheel.profile) state.wheel.profile = normalizeProfile(state.wheel.profile);
+    if (state.wheel) { // Alt-Räder ohne Zielspannung migrieren
+      state.wheel.targetLeftN = +state.wheel.targetLeftN || 0;
+      state.wheel.targetRightN = +state.wheel.targetRightN || 0;
+    }
   } catch { /* korrupte Daten ignorieren */ }
 }
 function save() {
@@ -212,10 +241,23 @@ function createWheel(name, position, spokeCount) {
   for (let i = 0; i < spokeCount; i++) {
     spokes.push({ index: i, side: i % 2 === 0 ? 'left' : 'right', reading: null });
   }
-  return { name, position, profile: normalizeProfile(DEFAULT_PROFILE), leftLengthMm: 250, rightLengthMm: 250, spokes };
+  return {
+    name, position, profile: normalizeProfile(DEFAULT_PROFILE),
+    leftLengthMm: 250, rightLengthMm: 250,
+    targetLeftN: 0, targetRightN: 0, // 0 = kein Ziel gesetzt
+    spokes,
+  };
 }
 
 function lengthMmForSide(w, side) { return side === 'left' ? w.leftLengthMm : w.rightLengthMm; }
+function targetForSide(w, side) { return (side === 'left' ? w.targetLeftN : w.targetRightN) || 0; }
+/// Ziel-Frequenz der gewählten Speiche (null ohne Rad/Speiche/Ziel).
+function targetFreqForSelected() {
+  const w = state.wheel, s = selectedSpoke();
+  if (!w || !s) return null;
+  const tN = targetForSide(w, s.side);
+  return tN > 0 ? freqForTension(tN, lengthMmForSide(w, s.side) / 1000, profileMu(w.profile)) : null;
+}
 function tensionForHzOnSide(w, hz, side) {
   return tensionNewton(hz, lengthMmForSide(w, side) / 1000, profileMu(w.profile));
 }
@@ -274,7 +316,7 @@ function initDom() {
   renderGuide();
   render();
   updateButton();
-  updateGauge(0, 0, false);
+  updateGauge(0, false);
 
   // Service Worker (offline / installierbar). Fehler still ignorieren.
   if ('serviceWorker' in navigator) {
@@ -291,10 +333,8 @@ function onLangChange() {
   renderGuide();
   render();
   updateButton();
-  updateGauge(
-    Measure.listening ? Measure.liveHz : (Measure.resultHz ?? 0),
-    0, Measure.listening,
-  );
+  if (Spectrum.el && !Spectrum.el.hidden) Spectrum.el.setAttribute('aria-label', t('aria.spectrum'));
+  updateGauge(Measure.listening ? Measure.liveHz : (Measure.resultHz ?? 0), Measure.listening);
 }
 
 const TAB_ORDER = ['measure', 'wheel', 'guide'];
@@ -316,6 +356,7 @@ function render() {
 
 const Pitch = {
   ctx: null, analyser: null, stream: null, raf: 0, buf: null, listening: false, onReading: null,
+  freqData: null, binHz: 0, // Byte-Spektrum fürs Live-Display + Oktav-Check
 
   async start(onReading) {
     this.onReading = onReading;
@@ -328,11 +369,15 @@ const Pitch = {
     this.analyser.fftSize = 4096;
     src.connect(this.analyser);
     this.buf = new Float32Array(this.analyser.fftSize);
+    this.freqData = new Uint8Array(this.analyser.frequencyBinCount);
+    this.binHz = this.ctx.sampleRate / this.analyser.fftSize;
     this.listening = true;
 
     let last = 0;
     const tick = (ts) => {
       if (!this.listening) return;
+      this.analyser.getByteFrequencyData(this.freqData);
+      Spectrum.draw(this.freqData, this.binHz); // jeden Frame: flüssige Anzeige
       if (ts - last >= 70) { // ~14 Analysen/s reichen, sparen CPU
         last = ts;
         this.analyser.getFloatTimeDomainData(this.buf);
@@ -349,6 +394,82 @@ const Pitch = {
     if (this.stream) { this.stream.getTracks().forEach(t => t.stop()); this.stream = null; }
     if (this.ctx) { try { await this.ctx.close(); } catch { /* ignore */ } this.ctx = null; }
     this.analyser = null;
+    this.freqData = null;
+  },
+};
+
+// ----------------------- Live-Spektrum -----------------------
+
+/// Stilisiertes Log-Frequenz-Spektrum (60–2000 Hz) des AnalyserNode.
+/// Marker: erkannte Frequenz (Linie) + Ziel-Frequenz der Speiche (gestrichelt).
+const Spectrum = {
+  el: null, g: null, colors: null, FMIN: 60, FMAX: 2000, BARS: 72,
+
+  x(f, w) { return w * Math.log(f / this.FMIN) / Math.log(this.FMAX / this.FMIN); },
+
+  show(on) {
+    if (!this.el) {
+      this.el = document.getElementById('spectrum');
+      this.g = this.el.getContext('2d');
+    }
+    this.el.hidden = !on;
+    if (!on) return;
+    this.el.setAttribute('aria-label', t('aria.spectrum'));
+    const css = getComputedStyle(document.documentElement);
+    this.colors = {
+      bar: css.getPropertyValue('--primary').trim() || '#d97706',
+      live: css.getPropertyValue('--on-surface').trim() || '#1c1917',
+      target: css.getPropertyValue('--green').trim() || '#16a34a',
+    };
+  },
+
+  draw(spec, binHz) {
+    if (!this.el || this.el.hidden) return;
+    // Backing-Store an CSS-Größe angleichen – heilt „Tab war beim Start
+    // versteckt“ (clientWidth 0) und Rotation/Resize mid-session.
+    const dpr = window.devicePixelRatio || 1;
+    const want = Math.round(this.el.clientWidth * dpr);
+    if (!want) return; // Mess-Tab gerade display:none
+    if (this.el.width !== want) {
+      this.el.width = want;
+      this.el.height = Math.round(this.el.clientHeight * dpr);
+    }
+    const g = this.g, W = this.el.width, H = this.el.height;
+    g.clearRect(0, 0, W, H);
+
+    const bw = W / this.BARS, gap = Math.max(0.5, W * 0.002);
+    for (let b = 0; b < this.BARS; b++) {
+      const f0 = this.FMIN * Math.pow(this.FMAX / this.FMIN, b / this.BARS);
+      const f1 = this.FMIN * Math.pow(this.FMAX / this.FMIN, (b + 1) / this.BARS);
+      let m = 0;
+      for (let i = Math.floor(f0 / binHz); i <= Math.ceil(f1 / binHz) && i < spec.length; i++) {
+        if (spec[i] > m) m = spec[i];
+      }
+      const h = Math.max(H * 0.02, (m / 255) * (H - 4)); // Bodensatz, damit die Skala sichtbar bleibt
+      g.globalAlpha = 0.25 + 0.75 * (m / 255);
+      g.fillStyle = this.colors.bar;
+      g.beginPath();
+      if (g.roundRect) g.roundRect(b * bw + gap, H - h, bw - 2 * gap, h, bw * 0.3);
+      else g.rect(b * bw + gap, H - h, bw - 2 * gap, h);
+      g.fill();
+    }
+    g.globalAlpha = 1;
+
+    if (Measure.liveHz >= this.FMIN && Measure.liveHz <= this.FMAX) {
+      const x = this.x(Measure.liveHz, W);
+      g.strokeStyle = this.colors.live;
+      g.lineWidth = Math.max(1, W / 400);
+      g.beginPath(); g.moveTo(x, 0); g.lineTo(x, H); g.stroke();
+    }
+    const tf = targetFreqForSelected();
+    if (tf && tf >= this.FMIN && tf <= this.FMAX) {
+      const x = this.x(tf, W);
+      g.strokeStyle = this.colors.target;
+      g.lineWidth = Math.max(1.5, W / 300);
+      g.setLineDash([H * 0.07, H * 0.05]);
+      g.beginPath(); g.moveTo(x, 0); g.lineTo(x, H); g.stroke();
+      g.setLineDash([]);
+    }
   },
 };
 
@@ -358,22 +479,39 @@ const Measure = {
   recent: [],    // gleitendes Fenster für Auto-Erfassung
   armed: true,   // erst nach einer Tonpause (nächster Anzupfer) wieder erfassen
   auto: false,   // Auto-Weiterschalten – nur sinnvoll mit Laufrad
+  starting: false,      // getUserMedia/Setup läuft noch
+  captured: new Set(),  // Speichen-Indizes dieser Sitzung (Auto-Modus)
   resultHz: null,
   liveHz: 0,
   stopTimer: 0,
-  MAX_LISTEN_MS: 60000, // Sicherheits-Cap, damit das Mikrofon nicht ewig läuft
+  IDLE_MS: 60000, // stoppt nach 60 s ohne erfasste Messung (Mikrofon nicht ewig offen)
+
+  /// Inaktivitäts-Timeout neu aufziehen – jede erfasste Speiche verlängert.
+  bumpIdle() {
+    clearTimeout(this.stopTimer);
+    this.stopTimer = setTimeout(() => this.finish(false), this.IDLE_MS);
+  },
+
+  progressHint() {
+    return t('hint.autoProgress', {
+      n: state.selectedSpokeIndex + 1, done: this.captured.size, total: state.wheel.spokes.length,
+    });
+  },
 
   async toggle() {
+    if (this.starting) return; // Start läuft (Berechtigungsdialog) – Taps ignorieren
     if (this.listening) { await this.finish(true); return; }
     this.samples = [];
     this.recent = [];
     this.armed = true;
+    this.captured = new Set(); // Indizes der in dieser Sitzung erfassten Speichen
     this.auto = !!(state.wheel && state.wheel.spokes.length);
     this.resultHz = null;
     this.liveHz = 0;
-    setHint(this.auto ? t('hint.autoListen', { n: state.selectedSpokeIndex + 1 }) : t('hint.start'));
+    setHint(this.auto ? this.progressHint() : t('hint.start'));
     this.listening = true;
     updateButton();
+    this.starting = true;
     try {
       await Pitch.start(r => this.onReading(r));
     } catch {
@@ -381,19 +519,28 @@ const Measure = {
       updateButton();
       setHint(t('hint.micError'));
       return;
+    } finally {
+      this.starting = false;
     }
-    // Kein kurzes Auto-Stopp mehr: läuft bis „Stoppen“ (oder Sicherheits-Cap).
-    this.stopTimer = setTimeout(() => this.finish(false), this.MAX_LISTEN_MS);
+    if (!this.listening) { await Pitch.stop(); return; } // während des Starts gestoppt
+    Spectrum.show(true);
+    this.bumpIdle();
   },
 
   onReading(r) {
     if (!this.listening) return;
+    if (r.freq > 0) r.freq = correctOctave(r.freq, Pitch.freqData, Pitch.binHz);
     if (r.freq > 0) this.liveHz = r.freq;
-    const level = Math.min(1, r.rms * 4);
     const good = r.freq >= 80 && r.freq <= 1500 && r.clarity > 0.9;
-    updateGauge(r.freq > 0 ? r.freq : 0, level, true);
+    updateGauge(r.freq > 0 ? r.freq : 0, true);
 
-    if (!this.auto) { if (good) this.samples.push(r.freq); return; }
+    if (!this.auto) {
+      if (!good) return;
+      this.samples.push(r.freq);
+      const m = stableReading(this.samples);
+      if (m != null) { this.resultHz = m; this.finish(false); } // Auto-Stopp bei stabilem Ton
+      return;
+    }
 
     // Auto-Modus: Tonpause „scharfschalten“, klarer Anzupfer füllt das Fenster.
     if (!good) { this.recent = []; this.armed = true; return; }
@@ -405,6 +552,7 @@ const Measure = {
   },
 
   /// Stabile Messung übernehmen, zur nächsten Speiche schalten, weiter lauschen.
+  /// Nach einer vollen Runde (alle Speichen erfasst) automatisch stoppen.
   lockReading(hz) {
     this.recent = [];
     this.armed = false; // bis zur nächsten Tonpause nicht erneut erfassen
@@ -416,11 +564,21 @@ const Measure = {
       timestamp: Date.now(),
     };
     save();
+    this.captured.add(spoke.index);
+    if (navigator.vibrate) navigator.vibrate(40);
+    this.bumpIdle();
     const done = spoke.index + 1;
     const count = state.wheel.spokes.length;
+    if (this.captured.size >= count) { // alle Speichen (distinkt) erfasst -> fertig
+      render();
+      toast(t('toast.allDone', { total: count }));
+      if (navigator.vibrate) navigator.vibrate([60, 60, 60]);
+      this.finish(false);
+      return;
+    }
     state.selectedSpokeIndex = (state.selectedSpokeIndex + 1) % count;
     render();
-    setHint(t('hint.autoListen', { n: state.selectedSpokeIndex + 1 }));
+    setHint(this.progressHint());
     toast(t('toast.applied', { n: done }));
   },
 
@@ -430,22 +588,24 @@ const Measure = {
     await Pitch.stop();
     this.listening = false;
     updateButton();
+    Spectrum.show(false);
 
     if (this.auto) { // Werte wurden schon live übernommen
       setHint(t('hint.stopped'));
-      updateGauge(0, 0, false);
+      updateGauge(0, false);
       return;
     }
 
-    const result = median(this.samples);
+    const result = this.resultHz ?? median(this.samples);
     if (result != null) {
       this.resultHz = result;
-      setHint(aborted ? t('hint.stopped') : t('hint.detected'));
+      if (navigator.vibrate) navigator.vibrate(40);
+      setHint(aborted ? t('hint.stopped') : t('hint.captured'));
     } else {
       this.resultHz = null;
       setHint(aborted ? t('hint.aborted') : t('hint.noClear'));
     }
-    updateGauge(this.resultHz ?? 0, 0, false);
+    updateGauge(this.resultHz ?? 0, false);
     renderApplySection();
   },
 
@@ -477,8 +637,8 @@ function previewTensionN(hz) {
   return tensionForHzOnSide(w, hz, s.side);
 }
 
-/// Gauge: große Hz-Zahl + Note + Cent-Tuner + berechnete Spannung + Pegel.
-function updateGauge(hz, level, listening) {
+/// Gauge: große Hz-Zahl + Note + Cent-Tuner + berechnete Spannung + Ziel-Abweichung.
+function updateGauge(hz, listening) {
   document.getElementById('gauge-freq').textContent = hz > 0 ? fmtNum(hz, 1) : '--';
   document.getElementById('gauge-note').innerHTML = hz > 0 ? noteHtml(hz) : '<span class="muted">—</span>';
   document.getElementById('gauge-label').textContent = listening ? t('gauge.listening') : t('gauge.freq');
@@ -498,9 +658,23 @@ function updateGauge(hz, level, listening) {
   document.getElementById('gauge-tension').textContent =
     hz > 0 ? (n != null ? formatTension(n) : '—') : '--';
 
-  const bar = document.getElementById('level-bar');
-  bar.parentElement.hidden = !listening;
-  bar.style.width = Math.round(Math.min(1, level) * 100) + '%';
+  // Zielspannung der Seite: live die Abweichung in %, sonst Ziel + Ziel-Frequenz.
+  const tgtEl = document.getElementById('gauge-target');
+  const w = state.wheel, s = selectedSpoke();
+  const tgt = w && s ? targetForSide(w, s.side) : 0;
+  if (tgt > 0 && n != null && hz > 0) {
+    const dev = (n - tgt) / tgt * 100;
+    const cls = Math.abs(dev) <= 5 ? 'ok' : Math.abs(dev) <= 10 ? 'near' : 'off';
+    tgtEl.hidden = false;
+    tgtEl.className = 'gauge-target ' + cls;
+    tgtEl.textContent = `${t('gauge.target')} ${formatTension(tgt)} · ${dev >= 0 ? '+' : '−'}${Math.abs(dev).toFixed(0)} %`;
+  } else if (tgt > 0) {
+    tgtEl.hidden = false;
+    tgtEl.className = 'gauge-target';
+    tgtEl.textContent = `${t('gauge.target')} ${formatTension(tgt)} ≈ ${fmtNum(targetFreqForSelected(), 0)} Hz`;
+  } else {
+    tgtEl.hidden = true;
+  }
 
   document.getElementById('gauge').classList.toggle('live', listening);
 }
@@ -522,6 +696,8 @@ function renderMeasureContext() {
     if (spoke) {
       rows.push([t('ctx.spoke'), `${t('label.nr')} ${spoke.index + 1} · ${sideLabel(spoke.side)}`]);
       rows.push([t('ctx.freeLength'), `${fmtNum(Math.round(lengthMmForSide(w, spoke.side)), 0)} mm`]);
+      const tgt = targetForSide(w, spoke.side);
+      if (tgt > 0) rows.push([t('gauge.target'), `${formatTension(tgt)} ≈ ${fmtNum(targetFreqForSelected(), 0)} Hz`]);
     }
     body = `<h3>${t('ctx.activeWheel')}</h3>` +
       rows.map(([k, v]) => `<div class="info-row"><span>${k}</span><b>${v}</b></div>`).join('') +
@@ -542,7 +718,7 @@ function renderMeasureContext() {
       state.unit = b.dataset.unit;
       save();
       render();
-      updateGauge(Measure.listening ? Measure.liveHz : (Measure.resultHz ?? 0), 0, Measure.listening);
+      updateGauge(Measure.listening ? Measure.liveHz : (Measure.resultHz ?? 0), Measure.listening);
     });
   });
 }
@@ -605,11 +781,12 @@ function renderCreateForm(el) {
 }
 
 function renderWheelDetail(el, w) {
-  // Seitenmittel für Band-Farben.
+  // Referenz für Band-Farben: Zielspannung der Seite, sonst Seitenmittel.
   const avg = {
     left: sideStats(w.spokes.filter(s => s.side === 'left' && s.reading).map(s => s.reading.tensionN), 0).avg,
     right: sideStats(w.spokes.filter(s => s.side === 'right' && s.reading).map(s => s.reading.tensionN), 0).avg,
   };
+  const ref = { left: w.targetLeftN || avg.left, right: w.targetRightN || avg.right };
 
   el.innerHTML = `
     <div class="row-between">
@@ -627,10 +804,13 @@ function renderWheelDetail(el, w) {
       ${lengthInput(t('build.freeLeft'), 'left', w.leftLengthMm)}
       ${lengthInput(t('build.freeRight'), 'right', w.rightLengthMm)}
       <p class="muted small">${t('build.note')}</p>
+      ${targetInput(t('build.targetLeft'), 'left', w.targetLeftN)}
+      ${targetInput(t('build.targetRight'), 'right', w.targetRightN)}
+      <p class="muted small">${t('build.targetHint')}</p>
     </div>
 
     <div class="card wheel-card">
-      ${wheelSvg(w, avg)}
+      ${wheelSvg(w, ref)}
       <div class="legend">
         <span><i style="background:${SPOKE_COLORS.unmeasured.fill}"></i>${t('legend.unmeasured')}</span>
         <span><i style="background:${SPOKE_COLORS.in.fill}"></i>${t('legend.inBand')}</span>
@@ -681,6 +861,17 @@ function renderWheelDetail(el, w) {
       render();
     });
   });
+  el.querySelectorAll('.tgt-input').forEach(inp => {
+    inp.addEventListener('change', () => {
+      let v = Math.round(parseFloat(inp.value));
+      if (!Number.isFinite(v) || v < 0) v = 0;
+      v = Math.min(2500, v);
+      inp.value = v;
+      if (inp.dataset.side === 'left') w.targetLeftN = v; else w.targetRightN = v;
+      save();
+      render();
+    });
+  });
   el.querySelectorAll('.spoke-dot').forEach(dot => dot.addEventListener('click', () => {
     state.selectedSpokeIndex = parseInt(dot.dataset.index, 10);
     save();
@@ -699,6 +890,16 @@ function lengthInput(label, side, value) {
       <input class="len-input" data-side="${side}" type="number" inputmode="numeric"
              min="60" max="400" step="1" value="${Math.round(value)}">
       <span class="num-unit">mm</span>
+    </div>
+  </div>`;
+}
+
+function targetInput(label, side, value) {
+  return `<div class="field"><span>${label}</span>
+    <div class="num-wrap">
+      <input class="tgt-input" data-side="${side}" type="number" inputmode="numeric"
+             min="0" max="2500" step="10" value="${Math.round(value || 0)}">
+      <span class="num-unit">N</span>
     </div>
   </div>`;
 }
@@ -743,13 +944,14 @@ function dimRow(label, key, value, min, max, step, unit) {
   </div>`;
 }
 
-function spokeStateOf(spoke, avgForSide) {
+/// refForSide = Zielspannung der Seite oder (ohne Ziel) das Seitenmittel.
+function spokeStateOf(spoke, refForSide) {
   if (!spoke.reading) return 'unmeasured';
-  if (avgForSide > 0 && Math.abs(spoke.reading.tensionN - avgForSide) <= avgForSide * 0.10) return 'in';
+  if (refForSide > 0 && Math.abs(spoke.reading.tensionN - refForSide) <= refForSide * 0.10) return 'in';
   return 'out';
 }
 
-function wheelSvg(w, avg) {
+function wheelSvg(w, ref) {
   const n = w.spokes.length;
   const cx = 160, cy = 160, R = 150;
   const spokeR = R * 0.78, hubR = R * 0.16;
@@ -762,7 +964,7 @@ function wheelSvg(w, avg) {
     const ang = i * (2 * Math.PI / n) - Math.PI / 2;
     const x = cx + Math.cos(ang) * spokeR, y = cy + Math.sin(ang) * spokeR;
     const hx = cx + Math.cos(ang) * hubR, hy = cy + Math.sin(ang) * hubR;
-    const col = SPOKE_COLORS[spokeStateOf(sp, avg[sp.side])];
+    const col = SPOKE_COLORS[spokeStateOf(sp, ref[sp.side])];
     const sel = i === state.selectedSpokeIndex;
 
     out += `<line x1="${hx.toFixed(1)}" y1="${hy.toFixed(1)}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}" stroke="${col.fill}" stroke-width="${sel ? 3 : 1.4}" opacity="${sel ? 1 : 0.5}"/>`;
@@ -815,8 +1017,8 @@ function renderEvenness(w) {
   if (!el) return;
   const tFor = side => w.spokes.filter(s => s.side === side && s.reading).map(s => s.reading.tensionN);
   const stats = {
-    left: sideStats(tFor('left'), w.spokes.filter(s => s.side === 'left').length),
-    right: sideStats(tFor('right'), w.spokes.filter(s => s.side === 'right').length),
+    left: sideStats(tFor('left'), w.spokes.filter(s => s.side === 'left').length, 0.10, w.targetLeftN),
+    right: sideStats(tFor('right'), w.spokes.filter(s => s.side === 'right').length, 0.10, w.targetRightN),
   };
   el.innerHTML = `<h3>${t('even.title')}</h3>` +
     sideStatsHtml(t('side.left'), stats.left) + '<hr>' + sideStatsHtml(t('side.right'), stats.right) +

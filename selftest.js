@@ -1,8 +1,8 @@
 // Runnable check for the pure math: `node selftest.js`
 const assert = require('assert');
 const {
-  muFromDiameterMm, muFromBladeMm, tensionNewton, newtonToKgf, hzToNote, median, sideStats,
-  stableReading, GRAVITY,
+  muFromDiameterMm, muFromBladeMm, tensionNewton, newtonToKgf, freqForTension, hzToNote,
+  median, correctOctave, sideStats, stableReading, GRAVITY,
 } = require('./app.js');
 
 // Physik (Port der Flutter-Tests).
@@ -42,6 +42,31 @@ assert.strictEqual(s.min, 1000);
 assert.strictEqual(s.max, 1400);
 assert.strictEqual(s.within, 3, '3 of 4 within +/-10% of mean');
 
+// Mit Zielspannung zählt das Band gegen das Ziel statt gegen das Mittel.
+const sRef = sideStats([1000, 1000, 1000, 1400], 5, 0.10, 1300);
+assert.strictEqual(sRef.within, 1, 'only 1400 within +/-10% of target 1300');
+assert.ok(Math.abs(sRef.avg - 1100) < 1e-9, 'avg unaffected by target ref');
+
+// freqForTension ist die Umkehrung von tensionNewton.
+const fInv = freqForTension(1100, 0.25, 0.0247);
+assert.ok(Math.abs(tensionNewton(fInv, 0.25, 0.0247) - 1100) < 1e-6, 'freqForTension inverse');
+
+// Oktavfehler: Byte-Spektrum ist dB-skaliert -> Byte-DIFFERENZ zählt.
+// Falten nur bei lautem Sub-Peak (>=128) nahe am Hauptpeak (<=30 Bytes ~ 8 dB).
+const binHz = 44100 / 4096;
+const spec = new Uint8Array(2048);
+const setPeak = (f, v) => { spec[Math.round(f / binHz)] = v; };
+setPeak(420, 220);
+assert.strictEqual(correctOctave(420, spec, binHz), 420, 'no sub-peak -> keep');
+setPeak(210, 200); // ~5,5 dB unter dem Hauptpeak -> echter Grundton
+assert.strictEqual(correctOctave(420, spec, binHz), 210, 'strong sub-peak -> fold octave');
+setPeak(210, 180); // ~11 dB darunter -> vermutlich Rauschen/Thump, nicht falten
+assert.strictEqual(correctOctave(420, spec, binHz), 420, 'sub-peak 11 dB below -> keep');
+setPeak(210, 100); // unter absolutem Floor (128 ~ -65 dBFS)
+assert.strictEqual(correctOctave(420, spec, binHz), 420, 'quiet sub-peak -> keep');
+assert.strictEqual(correctOctave(100, spec, binHz), 100, 'half below 60 Hz -> keep');
+assert.strictEqual(correctOctave(420, null, binHz), 420, 'no spectrum -> keep');
+
 // stableReading: erst genug Proben, dann nur bei engem Cluster ein Ergebnis.
 assert.strictEqual(stableReading([420, 421, 420], 8), null, 'too few samples -> null');
 assert.ok(Math.abs(stableReading(Array(10).fill(0).map((_, i) => 420 + (i % 2)), 8) - 420.5) < 1, 'tight cluster -> median');
@@ -60,11 +85,15 @@ for (const l of LANGS) {
     assert.strictEqual(!!c.note, !!GUIDE.de[i].note, `guide ${l}#${i} note presence`);
   });
 }
-// Platzhalter {n} muss in jeder Sprache erhalten bleiben.
+// Platzhalter müssen in jeder Sprache erhalten bleiben.
 for (const l of LANGS) {
   for (const k of ['btn.applyToSpoke', 'toast.applied', 'aria.wheel']) {
     assert.ok(MESSAGES[l][k].includes('{n}'), `placeholder {n} lost in ${l}.${k}`);
   }
+  for (const p of ['{n}', '{done}', '{total}']) {
+    assert.ok(MESSAGES[l]['hint.autoProgress'].includes(p), `placeholder ${p} lost in ${l}.hint.autoProgress`);
+  }
+  assert.ok(MESSAGES[l]['toast.allDone'].includes('{total}'), `placeholder {total} lost in ${l}.toast.allDone`);
 }
 
 console.log(`OK: all selftests passed (${LANGS.length} languages, ${Object.keys(MESSAGES.de).length} keys)`);

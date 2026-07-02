@@ -147,9 +147,13 @@
     .tension-box { display:inline-block; margin-top:16px; padding:9px 20px; border-radius:18px; background: var(--surface-2); }
     .tension-box .muted { font-size:.74rem; letter-spacing:.5px; text-transform:uppercase; }
     #gauge-tension { font-size:1.55rem; font-weight:800; font-variant-numeric:tabular-nums; color: var(--on-surface); }
-    .level-wrap { margin-top:16px; }
-    .level-track { height:8px; border-radius:var(--pill); background: var(--surface-3); overflow:hidden; }
-    #level-bar { height:100%; width:0; background: var(--primary); border-radius:var(--pill); transition:width .08s linear; }
+    .gauge-target { margin-top:10px; font-weight:700; font-size:.95rem; color: var(--on-variant); }
+    .gauge-target.ok { color: var(--green); }
+    .gauge-target.near { color: var(--orange); }
+    .gauge-target.off { color: var(--red); }
+    #spectrum { display:block; width:100%; height:96px; margin-top:16px; border-radius:16px;
+      background: color-mix(in srgb, var(--surface-3) 65%, transparent); }
+    #spectrum[hidden] { display:none; }
     #gauge-hint { margin-top:14px; font-weight:600; min-height:1.2rem; color: var(--on-surface); }
 
     /* -------- buttons (pills) -------- */
@@ -264,9 +268,8 @@
           <div class="muted" data-i18n="gauge.tension">Spannung</div>
           <div id="gauge-tension">--</div>
         </div>
-        <div class="level-wrap" hidden>
-          <div class="level-track"><div id="level-bar"></div></div>
-        </div>
+        <div class="gauge-target" id="gauge-target" hidden></div>
+        <canvas id="spectrum" hidden></canvas>
         <div id="gauge-hint" data-i18n="hint.idle">Tippe auf „Lauschen“ und zupfe dann die Speiche an.</div>
       </div>
       <button id="listen-btn">🎤  Lauschen</button>
