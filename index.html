@@ -154,6 +154,31 @@
     #spectrum { display:block; width:100%; height:96px; margin-top:16px; border-radius:16px;
       background: color-mix(in srgb, var(--surface-3) 65%, transparent); }
     #spectrum[hidden] { display:none; }
+
+    /* Sample-Fortschritt einer Speiche */
+    .pips { display:flex; gap:7px; justify-content:center; margin-top:14px; }
+    .pips[hidden] { display:none; }
+    .pips span { width:28px; height:9px; border-radius:var(--pill); background:var(--surface-3);
+      transition:background .12s, transform .12s; }
+    .pips span.on { background:var(--primary); transform:scaleY(1.25); }
+
+    /* Erfolgs-Einblendung */
+    #capture-flash { position:absolute; inset:0; z-index:2; border-radius:inherit;
+      display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px;
+      background: color-mix(in srgb, var(--green) 12%, var(--surface));
+      opacity:0; pointer-events:none; }
+    #capture-flash[hidden] { display:none; }
+    #capture-flash.show { animation: flashpop 1.25s ease forwards; }
+    .flash-check { width:64px; height:64px; border-radius:50%; background:var(--green); color:#fff;
+      font-size:2.1rem; font-weight:800; display:flex; align-items:center; justify-content:center; }
+    .flash-title { font-weight:800; font-size:1.2rem; padding:0 14px; text-align:center; }
+    .flash-sub { color:var(--on-variant); font-weight:700; font-variant-numeric:tabular-nums; }
+    @keyframes flashpop {
+      0% { opacity:0; transform:scale(.94); }
+      12% { opacity:1; transform:scale(1); }
+      78% { opacity:1; }
+      100% { opacity:0; }
+    }
     #gauge-hint { margin-top:14px; font-weight:600; min-height:1.2rem; color: var(--on-surface); }
 
     /* -------- buttons (pills) -------- */
@@ -269,8 +294,14 @@
           <div id="gauge-tension">--</div>
         </div>
         <div class="gauge-target" id="gauge-target" hidden></div>
+        <div class="pips" id="pips" aria-hidden="true" hidden></div>
         <canvas id="spectrum" hidden></canvas>
         <div id="gauge-hint" data-i18n="hint.idle">Tippe auf „Lauschen“ und zupfe dann die Speiche an.</div>
+        <div id="capture-flash" hidden>
+          <div class="flash-check">✓</div>
+          <div class="flash-title"></div>
+          <div class="flash-sub"></div>
+        </div>
       </div>
       <button id="listen-btn">🎤  Lauschen</button>
       <div id="apply-section"></div>

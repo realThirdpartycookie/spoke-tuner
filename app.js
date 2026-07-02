@@ -52,11 +52,14 @@ function median(values) {
   return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
 
+/// Nötige Proben für eine gültige Messung – auch die Segment-Anzeige im UI.
+const MIN_SAMPLES = 5;
+
 /// „Statistisch sinnvolle“ Messung: genug Proben UND eng geclustert.
 /// Liefert den Median-Hz, wenn der robuste Spread (MAD) <= relSpread*Median liegt, sonst null.
 // ponytail: Defaults an echter Zupf-Aufnahme kalibriert (Ton kippt nach ~350 ms
 // in den Nachbarmodus, 8 Proben à 70 ms kamen nie zusammen); bei Fehl-Locks hier drehen.
-function stableReading(samples, minSamples = 5, relSpread = 0.02) {
+function stableReading(samples, minSamples = MIN_SAMPLES, relSpread = 0.02) {
   if (samples.length < minSamples) return null;
   const recent = samples.slice(-minSamples);
   const m = median(recent);
@@ -526,6 +529,8 @@ const Measure = {
     }
     if (!this.listening) { await Pitch.stop(); return; } // während des Starts gestoppt
     Spectrum.show(true);
+    updatePips(0);
+    document.getElementById('pips').hidden = false;
     this.bumpIdle();
   },
 
@@ -539,21 +544,22 @@ const Measure = {
     const good = r.freq >= 80 && r.freq <= 1500 && r.clarity > 0.7 && r.rms >= 0.02;
     updateGauge(r.freq > 0 ? r.freq : 0, true);
 
-    if (!this.auto) {
-      if (!good) return;
-      this.samples.push(r.freq);
-      const m = stableReading(this.samples);
-      if (m != null) { this.resultHz = m; this.finish(false); } // Auto-Stopp bei stabilem Ton
+    // Tonpause „scharfschalten“, klarer Anzupfer füllt das Fenster (beide Modi).
+    if (!good) {
+      this.recent = [];
+      this.armed = true;
+      updatePips(0);
       return;
     }
-
-    // Auto-Modus: Tonpause „scharfschalten“, klarer Anzupfer füllt das Fenster.
-    if (!good) { this.recent = []; this.armed = true; return; }
-    if (!this.armed) return; // Ausklingen des erfassten Tons ignorieren
+    if (this.auto && !this.armed) return; // Ausklingen des erfassten Tons ignorieren
+    this.samples.push(r.freq); // für den Median-Fallback beim manuellen Stopp
     this.recent.push(r.freq);
     if (this.recent.length > 24) this.recent.shift();
+    updatePips(this.recent.length);
     const m = stableReading(this.recent);
-    if (m != null) this.lockReading(m);
+    if (m == null) return;
+    if (this.auto) this.lockReading(m);
+    else { this.resultHz = m; this.finish(false); } // Auto-Stopp bei stabilem Ton
   },
 
   /// Stabile Messung übernehmen, zur nächsten Speiche schalten, weiter lauschen.
@@ -572,10 +578,13 @@ const Measure = {
     this.captured.add(spoke.index);
     if (navigator.vibrate) navigator.vibrate(40);
     this.bumpIdle();
+    updatePips(0);
     const done = spoke.index + 1;
     const count = state.wheel.spokes.length;
+    const sub = `${fmtNum(hz, 1)} Hz · ${formatTension(spoke.reading.tensionN)}`;
     if (this.captured.size >= count) { // alle Speichen (distinkt) erfasst -> fertig
       render();
+      captureFlash(t('toast.allDone', { total: count }), sub);
       toast(t('toast.allDone', { total: count }));
       if (navigator.vibrate) navigator.vibrate([60, 60, 60]);
       this.finish(false);
@@ -584,6 +593,7 @@ const Measure = {
     state.selectedSpokeIndex = (state.selectedSpokeIndex + 1) % count;
     render();
     setHint(this.progressHint());
+    captureFlash(t('toast.applied', { n: done }), sub);
     toast(t('toast.applied', { n: done }));
   },
 
@@ -594,6 +604,7 @@ const Measure = {
     this.listening = false;
     updateButton();
     Spectrum.show(false);
+    document.getElementById('pips').hidden = true;
 
     if (this.auto) { // Werte wurden schon live übernommen
       setHint(t('hint.stopped'));
@@ -606,6 +617,10 @@ const Measure = {
       this.resultHz = result;
       if (navigator.vibrate) navigator.vibrate(40);
       setHint(aborted ? t('hint.stopped') : t('hint.captured'));
+      if (!aborted) {
+        const n = previewTensionN(result);
+        captureFlash(t('hint.captured'), fmtNum(result, 1) + ' Hz' + (n != null ? ' · ' + formatTension(n) : ''));
+      }
     } else {
       this.resultHz = null;
       setHint(aborted ? t('hint.aborted') : t('hint.noClear'));
@@ -635,6 +650,27 @@ function updateButton() {
   btn.classList.toggle('listening', Measure.listening);
 }
 function setHint(text) { document.getElementById('gauge-hint').textContent = text; }
+
+/// Sample-Fortschritt der aktuellen Speiche: n von MIN_SAMPLES Segmenten gefüllt.
+function updatePips(n) {
+  const el = document.getElementById('pips');
+  if (el.childElementCount !== MIN_SAMPLES) el.innerHTML = '<span></span>'.repeat(MIN_SAMPLES);
+  [...el.children].forEach((p, i) => p.classList.toggle('on', i < n));
+}
+
+/// Große Erfolgs-Einblendung über dem Gauge (Haken + Titel + Hz/Spannung).
+let flashTimer = 0;
+function captureFlash(title, sub) {
+  const el = document.getElementById('capture-flash');
+  el.querySelector('.flash-title').textContent = title;
+  el.querySelector('.flash-sub').textContent = sub;
+  el.hidden = false;
+  el.classList.remove('show');
+  void el.offsetWidth; // Reflow erzwingen, damit die Animation neu startet
+  el.classList.add('show');
+  clearTimeout(flashTimer);
+  flashTimer = setTimeout(() => { el.hidden = true; el.classList.remove('show'); }, 1250);
+}
 
 function previewTensionN(hz) {
   const w = state.wheel, s = selectedSpoke();
