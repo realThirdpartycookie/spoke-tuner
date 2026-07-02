@@ -54,7 +54,9 @@ function median(values) {
 
 /// „Statistisch sinnvolle“ Messung: genug Proben UND eng geclustert.
 /// Liefert den Median-Hz, wenn der robuste Spread (MAD) <= relSpread*Median liegt, sonst null.
-function stableReading(samples, minSamples = 8, relSpread = 0.02) {
+// ponytail: Defaults an echter Zupf-Aufnahme kalibriert (Ton kippt nach ~350 ms
+// in den Nachbarmodus, 8 Proben à 70 ms kamen nie zusammen); bei Fehl-Locks hier drehen.
+function stableReading(samples, minSamples = 5, relSpread = 0.02) {
   if (samples.length < minSamples) return null;
   const recent = samples.slice(-minSamples);
   const m = median(recent);
@@ -378,7 +380,7 @@ const Pitch = {
       if (!this.listening) return;
       this.analyser.getByteFrequencyData(this.freqData);
       Spectrum.draw(this.freqData, this.binHz); // jeden Frame: flüssige Anzeige
-      if (ts - last >= 70) { // ~14 Analysen/s reichen, sparen CPU
+      if (ts - last >= 40) { // ~25 Analysen/s: der Zupfton trägt nur ~350 ms
         last = ts;
         this.analyser.getFloatTimeDomainData(this.buf);
         this.onReading(detectPitch(this.buf, this.ctx.sampleRate));
@@ -531,7 +533,10 @@ const Measure = {
     if (!this.listening) return;
     if (r.freq > 0) r.freq = correctOctave(r.freq, Pitch.freqData, Pitch.binHz);
     if (r.freq > 0) this.liveHz = r.freq;
-    const good = r.freq >= 80 && r.freq <= 1500 && r.clarity > 0.9;
+    // Gate an echter Aufnahme kalibriert: reale Zupfer erreichen clarity max.
+    // ~0,86 (nie 0,9); rms-Floor hält Dauerbrummen und den leisen Nachklang
+    // der Nachbarspeiche draußen.
+    const good = r.freq >= 80 && r.freq <= 1500 && r.clarity > 0.7 && r.rms >= 0.02;
     updateGauge(r.freq > 0 ? r.freq : 0, true);
 
     if (!this.auto) {

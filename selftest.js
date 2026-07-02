@@ -67,10 +67,11 @@ assert.strictEqual(correctOctave(420, spec, binHz), 420, 'quiet sub-peak -> keep
 assert.strictEqual(correctOctave(100, spec, binHz), 100, 'half below 60 Hz -> keep');
 assert.strictEqual(correctOctave(420, null, binHz), 420, 'no spectrum -> keep');
 
-// stableReading: erst genug Proben, dann nur bei engem Cluster ein Ergebnis.
-assert.strictEqual(stableReading([420, 421, 420], 8), null, 'too few samples -> null');
-assert.ok(Math.abs(stableReading(Array(10).fill(0).map((_, i) => 420 + (i % 2)), 8) - 420.5) < 1, 'tight cluster -> median');
-assert.strictEqual(stableReading([420, 600, 421, 590, 419, 610, 422, 580, 421, 600], 8), null, 'noisy -> null');
+// stableReading: erst genug Proben (Default 5), dann nur bei engem Cluster ein Ergebnis.
+assert.strictEqual(stableReading([420, 421, 420, 421]), null, 'too few samples -> null');
+assert.ok(Math.abs(stableReading(Array(10).fill(0).map((_, i) => 420 + (i % 2))) - 420.5) < 1, 'tight cluster -> median');
+assert.strictEqual(stableReading([420, 600, 421, 590, 419, 610, 422, 580, 421, 600]), null, 'noisy -> null');
+assert.strictEqual(stableReading([420, 421, 420, 421, 420, 421], 8), null, 'explicit minSamples respected');
 
 // i18n: jede Sprache hat exakt dieselben Schlüssel + gleiche Guide-Struktur wie DE.
 const { LANGS, MESSAGES, GUIDE } = require('./i18n.js');
