@@ -1,6 +1,6 @@
 // Offline-Replay: echte Zupf-Aufnahmen durch die App-Erkennung (detectPitch
-// + pluckVote) schleifen und Paar-Konsistenz pruefen. Spiegelt App.onReading.
-// Aufruf: node verify_recording.js file.wav
+// + pluckVote, Lock bei Tonpause) schleifen und Paar-Konsistenz pruefen.
+// Spiegelt App.onReading. Aufruf: node verify_recording.js file.wav
 const fs = require('fs');
 const { detectPitch, pluckVote } = require('./app.js');
 
@@ -25,7 +25,7 @@ function loadWav(path) {
 const { x, sr } = loadWav(process.argv[2]);
 const WIN = 4096, HOP = Math.round(sr * 0.04);
 const results = [];
-let pluck = [], locked = false, silent = 0;
+let pluck = [], silent = 0;
 
 for (let start = 0; start + WIN <= x.length; start += HOP) {
   const r = detectPitch(x.slice(start, start + WIN), sr);
@@ -34,27 +34,22 @@ for (let start = 0; start + WIN <= x.length; start += HOP) {
     silent++;
     if (silent < 8) continue;
     if (pluck.length) {
-      if (!locked) {
-        const v = pluckVote(pluck);
-        if (v && v.count >= 4 && v.margin >= 1.8)
-          results.push({ t: start / sr, hz: v.hz, frames: v.count });
-      }
-      pluck = []; locked = false;
+      const v = pluckVote(pluck);
+      const totalW = pluck.reduce((s, q) => s + q.c * q.c, 0);
+      const bestW = v ? pluck.filter(q => Math.abs(q.f / v.hz - 1) < 0.03).reduce((s, q) => s + q.c * q.c, 0) : 0;
+      if (v && v.count >= 4 && bestW >= 0.35 * totalW)
+        results.push({ t: start / sr, hz: v.hz, frames: v.count });
+      pluck = [];
     }
     continue;
   }
   silent = 0;
   pluck.push({ f: r.freq, c: r.clarity });
-  if (pluck.length > 40) pluck.shift();
-  const v = pluckVote(pluck);
-  if (v && v.count >= 5 && v.margin >= 2 && !locked) {
-    results.push({ t: start / sr, hz: v.hz, frames: v.count, auto: true });
-    locked = true;
-  }
+  if (pluck.length > 60) pluck.shift();
 }
 
 console.log(`\n=== ${process.argv[2]} (${(x.length / sr).toFixed(1)}s) ===`);
-for (const r of results) console.log(`  ${r.t.toFixed(2)}s -> ${r.hz.toFixed(1)} Hz  (${r.frames} Frames${r.auto ? ', auto' : ''})`);
+for (const r of results) console.log(`  ${r.t.toFixed(2)}s -> ${r.hz.toFixed(1)} Hz  (${r.frames} Frames)`);
 let ok = 0, fail = 0;
 for (let i = 1; i < results.length; i += 2) {
   const a = results[i - 1].hz, b = results[i].hz;

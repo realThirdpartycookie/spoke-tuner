@@ -191,14 +191,22 @@ function detectPitch(buf, sampleRate) {
       if (f * k > 3000) break;
       sup += ampAt(f * k) / k;
     }
-    // Grundton-Präsenz: bei steifen Drähten kippt YIN sonst auf f/2 oder f/3,
-    // weil z. B. 3f stark ist. Wer selbst im Spektrum fehlt, wird bestraft.
+    // Grundton-Präsenz: YIN-Subharmonische (f/3, f/4) bekommen Pseudo-
+    // Unterstützung, weil ihre "Obertöne" auf echte Spektral-Peaks fallen
+    // (z. B. 140 Hz: 3f=421, 4f=548 sind echte Peaks, aber 140 selbst fehlt).
+    // Wer spektral nicht existiert, wird hart bestraft.
     const relFund = globalMax > 0 ? ampAt(f) / globalMax : 0;
-    const presence = relFund < 0.03 ? 0.15 : relFund < 0.1 ? 0.5 : 1;
+    const presence = relFund < 0.05 ? 0.02 : relFund < 0.1 ? 0.4 : relFund < 0.2 ? 0.7 : 1;
     const score = (1 - dp.val) * sup * presence;
     if (score > bestScore) { bestScore = score; best = dp; }
   }
   const tau = best.tau;
+
+  // Phantom-Check: gewählter Kandidat hat keinen Spektral-Peak -> YIN-Artefakt
+  // (Perioden-Kamm aus mehreren Modi). Besser unvoiced melden als eine
+  // fiktive Subharmonische zu locken; die Ausklingframes liefern den echten Ton.
+  const relBest = globalMax > 0 ? ampAt(sampleRate / tau) / globalMax : 1;
+  if (relBest < 0.05) return { freq: -1, clarity: 0, rms };
 
   // Parabel-Interpolation für Sub-Sample-Genauigkeit.
   const x1 = cmnd[tau - 1] || cmnd[tau], x2 = cmnd[tau], x3 = cmnd[tau + 1] || cmnd[tau];
@@ -234,8 +242,15 @@ function pluckVote(frames) {
     cl.hz = cl.items.reduce((s, q) => s + q.c * q.c * q.f, 0) / cl.weight;
   }
   clusters.sort((a, b) => b.weight - a.weight);
-  const best = clusters[0];
-  const second = clusters[1];
+  // Dual-Mode-Regel: Speichen schwingen in zwei Ebenen mit leicht verschiedenen
+  // Frequenzen; je nach Zupfrichtung dominiert mal die obere, mal die untere.
+  // Konsistent ist immer die UNTERE Mode (sie klingt laenger nach, siehe
+  // Auskling-Sweeps in den Testaufnahmen). Nimm den tiefsten Cluster, der noch
+  // >=30% des staerksten Gewichts hat.
+  const maxW = clusters[0].weight;
+  const candidates = clusters.filter(c => c.weight >= 0.3 * maxW);
+  const best = candidates.reduce((a, b) => (a.hz < b.hz ? a : b));
+  const second = clusters.find(c => c !== best);
   return {
     hz: best.hz,
     count: best.items.length,
@@ -676,10 +691,10 @@ const Measure = {
       this.silentFrames = (this.silentFrames || 0) + 1;
       if (this.silentFrames < 8) return;
       if (this.pluck.length) {
-        if (!this.pluckLocked) {
-          const v = pluckVote(this.pluck); // Fallback bei kurzem/weichem Ton
-          if (v && v.count >= 4 && v.margin >= 1.8) this.commitPluck(v.hz);
-        }
+        const v = pluckVote(this.pluck);
+        const totalW = this.pluck.reduce((s, q) => s + q.c * q.c, 0);
+        const bestW = v ? this.pluck.filter(q => Math.abs(q.f / v.hz - 1) < 0.03).reduce((s, q) => s + q.c * q.c, 0) : 0;
+        if (v && v.count >= 4 && bestW >= 0.35 * totalW) this.commitPluck(v.hz);
         this.pluck = [];
         this.pluckLocked = false;
       }
@@ -691,16 +706,10 @@ const Measure = {
     if (this.auto && !this.armed) return; // Ausklingen des erfassten Tons ignorieren
     this.samples.push(r.freq);
     this.pluck.push({ f: r.freq, c: r.clarity });
-    if (this.pluck.length > 40) this.pluck.shift();
+    if (this.pluck.length > 60) this.pluck.shift();
     updatePips(this.pluck.length);
-    const v = pluckVote(this.pluck);
-    if (!v) return;
-    // Lock, sobald ein Cluster klar dominiert.
-    if (v.count >= 5 && v.margin >= 2) {
-      this.pluckLocked = true;
-      if (this.auto) this.lockReading(v.hz);
-      else { this.resultHz = v.hz; this.finish(false); }
-    }
+    // Kein Frueh-Lock mehr: der Moden-Sweep im Ausklingen (obere Mode klingt
+    // schneller ab) ist erst am Tonende sicher auswertbar. Lock bei Tonpause.
   },
 
   /// Zupfer-Ergebnis übernehmen (Fallback aus Tonpause oder manuellem Stopp).
