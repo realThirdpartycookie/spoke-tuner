@@ -219,6 +219,18 @@ function detectPitch(buf, sampleRate) {
   return { freq, clarity, rms };
 }
 
+/// Gewichteter Median über Frames {f, c} (Gewicht = clarity²).
+function weightedMedian(frames) {
+  const pts = frames.slice().sort((a, b) => a.f - b.f);
+  const total = pts.reduce((s, q) => s + q.c * q.c, 0);
+  let acc = 0;
+  for (const q of pts) {
+    acc += q.c * q.c;
+    if (acc >= total / 2) return q.f;
+  }
+  return pts[pts.length - 1].f;
+}
+
 /// Pluck-Voting: über alle Frames eines Zupfers clustern (3%-Bänder) und mit
 /// clarity^2 gewichten. Der Anschlag (breitbandig, clarity ~0.5-0.65) und
 /// Subharmonischen-Fehlgriffe (clarity ~0.65-0.72) verlieren so gegen die
@@ -308,7 +320,7 @@ function sideStats(tensions, total, band = 0.10, ref = 0) {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     muFromDiameterMm, muFromBladeMm, tensionNewton, newtonToKgf, freqForTension, hzToNote,
-    median, detectPitch, correctOctave, sideStats, stableReading, pluckVote, GRAVITY,
+    median, detectPitch, correctOctave, sideStats, stableReading, pluckVote, weightedMedian, GRAVITY,
   };
 }
 
@@ -694,15 +706,41 @@ const Measure = {
         const v = pluckVote(this.pluck);
         const totalW = this.pluck.reduce((s, q) => s + q.c * q.c, 0);
         const bestW = v ? this.pluck.filter(q => Math.abs(q.f / v.hz - 1) < 0.03).reduce((s, q) => s + q.c * q.c, 0) : 0;
-        if (v && v.count >= 4 && bestW >= 0.35 * totalW) this.commitPluck(v.hz);
+        if (v && v.count >= 4 && bestW >= 0.35 * totalW) {
+          this.commitPluck(v.hz);
+        } else {
+          // Fallback Dual-Mode-Sweep: Frames verteilen sich auf zwei Modi,
+          // kein Cluster erreicht die Huerde. Stabile Frames (c>=0.75) sind
+          // trotzdem verlaesslich -> gewichteter Median ueber sie.
+          const strong = this.pluck.filter(q => q.c >= 0.75);
+          if (strong.length >= 2) this.commitPluck(weightedMedian(strong));
+        }
         this.pluck = [];
         this.pluckLocked = false;
+        this.rmsFloor = 0;
       }
       this.armed = true;
       updatePips(0);
       return;
     }
     this.silentFrames = 0;
+
+    // Onset-Segmentierung: neuer Anschlag mitten im Ausklingen des alten.
+    // Sprung-Erkennung gegen den VORHERIGEN rms-Wert (Ausklingen ist glatt,
+    // ~0.9x pro Frame; ein neuer Anschlag springt 3-10x). Erst 3
+    // aufeinanderfolgende Sprung-Frames trennen — einzelne Dips nicht.
+    const isLoud = r.rms > Math.max(0.025, 2.2 * (this._prevRms || 0));
+    this._onsetRun = this.pluck.length && isLoud ? (this._onsetRun || 0) + 1 : 0;
+    if (this.pluck.length && this._onsetRun === 3) {
+      const onsetFrames = this.pluck.splice(-3); // gehoeren zum neuen Zupfer
+      const v = pluckVote(this.pluck);
+      if (v && v.count >= 4) this.commitPluck(v.hz);
+      this.pluck = onsetFrames;
+      this._onsetRun = 0;
+      updatePips(this.pluck.length);
+      return;
+    }
+    this._prevRms = r.rms;
     if (this.auto && !this.armed) return; // Ausklingen des erfassten Tons ignorieren
     this.samples.push(r.freq);
     this.pluck.push({ f: r.freq, c: r.clarity });
