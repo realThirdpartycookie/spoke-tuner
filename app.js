@@ -68,17 +68,53 @@ function stableReading(samples, minSamples = MIN_SAMPLES, relSpread = 0.02) {
   return (mad / m) <= relSpread ? m : null;
 }
 
-/// Autokorrelation -> Grundfrequenz. clarity 0..1 = Periodizität, rms = Pegel.
-/// Port des klassischen Web-Audio-Pitchdetektors (ACF + Parabel-Interpolation).
-// ponytail: O(n^2)-ACF auf <=4096 Samples, gedrosselt aufgerufen; bei
-// Performance-Problemen auf FFT-basiert umstellen.
+/// Kleine Radix-2-FFT (nächste Zweierpotenz, Hann-Fenster), nur Magnituden.
+/// Für die Harmonischen-Bewertung in detectPitch; kein externes Paket nötig.
+// ponytail: 4096er-FFT ~25x/s ist auf dem Handy unkritisch.
+function fftMag(buf) {
+  let n = 1;
+  while (n < buf.length) n <<= 1;
+  const re = new Float64Array(n), im = new Float64Array(n);
+  for (let i = 0; i < buf.length; i++) {
+    re[i] = buf[i] * (0.5 - 0.5 * Math.cos(2 * Math.PI * i / (buf.length - 1)));
+  }
+  // Bit-Reversal
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) { const t = re[i]; re[i] = re[j]; re[j] = t; }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = -2 * Math.PI / len;
+    const wr = Math.cos(ang), wi = Math.sin(ang);
+    for (let i = 0; i < n; i += len) {
+      let cwr = 1, cwi = 0;
+      for (let k = 0; k < len / 2; k++) {
+        const ur = re[i + k], ui = im[i + k];
+        const vr = re[i + k + len / 2] * cwr - im[i + k + len / 2] * cwi;
+        const vi = re[i + k + len / 2] * cwi + im[i + k + len / 2] * cwr;
+        re[i + k] = ur + vr; im[i + k] = ui + vi;
+        re[i + k + len / 2] = ur - vr; im[i + k + len / 2] = ui - vi;
+        const nwr = cwr * wr - cwi * wi;
+        cwi = cwr * wi + cwi * wr; cwr = nwr;
+      }
+    }
+  }
+  const mag = new Float64Array(n / 2);
+  for (let i = 0; i < n / 2; i++) mag[i] = Math.hypot(re[i], im[i]);
+  return { mag, n };
+}
+
+/// Grundfrequenz via YIN (Differenzfunktion + kumulative Mittelwert-Normalisierung).
+/// Robuster als rohe ACF für abklingende Zupftöne: die Amplituden-Dämpfung drückt
+/// bei ACF die clarity weg, YIN normalisiert sie raus. Zusätzlich wird die
+/// Anschlagsphase (breitbandiges Transient) vom Aufrufer übersprungen.
+// ponytail: O(n^2) auf <=4096 Samples, ~25x/s. Bei Performance-Problemen FFT.
 function detectPitch(buf, sampleRate) {
   const SIZE = buf.length;
   let rms = 0;
-  for (let i = 0; i < SIZE; i++) {
-    const v = buf[i];
-    rms += v * v;
-  }
+  for (let i = 0; i < SIZE; i++) rms += buf[i] * buf[i];
   rms = Math.sqrt(rms / SIZE);
   if (rms < 0.01) return { freq: -1, clarity: 0, rms };
 
@@ -95,32 +131,116 @@ function detectPitch(buf, sampleRate) {
   const n = b.length;
   if (n < 8) return { freq: -1, clarity: 0, rms };
 
-  const c = new Float32Array(n);
-  for (let i = 0; i < n; i++) {
+  const FMIN = 80, FMAX = 1500;
+  const tMin = Math.max(2, Math.floor(sampleRate / FMAX));
+  const tMax = Math.min(n - 2, Math.ceil(sampleRate / FMIN));
+
+  // YIN Schritt 1+2: Differenzfunktion d(tau), dann CMND d'(tau).
+  const d = new Float32Array(tMax + 2);
+  for (let tau = 1; tau <= tMax + 1; tau++) {
     let sum = 0;
-    for (let j = 0; j < n - i; j++) sum += b[j] * b[j + i];
-    c[i] = sum;
+    for (let j = 0; j + tau < n; j++) {
+      const v = b[j] - b[j + tau];
+      sum += v * v;
+    }
+    d[tau] = sum;
+  }
+  const cmnd = new Float32Array(tMax + 2);
+  cmnd[0] = 1;
+  let run = 0;
+  for (let tau = 1; tau <= tMax + 1; tau++) {
+    run += d[tau];
+    cmnd[tau] = run > 0 ? (d[tau] * tau) / run : 1;
   }
 
-  // Erstes Tal überspringen, dann höchstes Maximum suchen.
-  let d = 0;
-  while (d < n - 1 && c[d] > c[d + 1]) d++;
-  let maxval = -1, maxpos = -1;
-  for (let i = d; i < n; i++) {
-    if (c[i] > maxval) { maxval = c[i]; maxpos = i; }
+  // Schritt 3: lokale Minima unter Schwelle sammeln (Kandidaten).
+  const THRESH = 0.35;
+  const dips = []; // {tau, val}
+  for (let t = tMin; t < tMax; t++) {
+    if (cmnd[t] < THRESH && cmnd[t] <= cmnd[t - 1] && cmnd[t] < cmnd[t + 1]) {
+      dips.push({ tau: t, val: cmnd[t] });
+    }
   }
-  if (maxpos <= 0) return { freq: -1, clarity: 0, rms };
+  if (!dips.length) {
+    let mv = Infinity, bt = -1;
+    for (let t = tMin; t < tMax; t++) if (cmnd[t] < mv) { mv = cmnd[t]; bt = t; }
+    if (bt > 0) dips.push({ tau: bt, val: mv });
+  }
+  if (!dips.length) return { freq: -1, clarity: 0, rms };
 
-  // Parabel-Interpolation um das Maximum für Sub-Sample-Genauigkeit.
-  let T0 = maxpos;
-  const x1 = c[T0 - 1] || 0, x2 = c[T0], x3 = c[T0 + 1] || 0;
+  // Schritt 4: Subharmonischen-Auflösung via Spektrum des Fensters.
+  // Bei steifen Drähten (Speichen!) fehlt der Grundton oft im Spektrum,
+  // die Energie sitzt in f3/f4 — YIN kippt dann auf f/3. Bewertung:
+  // gewichtete Harmonischen-Summe aus dem FFT-Spektrum.
+  const spec = fftMag(b);
+  const ampAt = (fc) => {
+    const lo = Math.max(1, Math.floor(fc * 0.97 / sampleRate * spec.n)),
+          hi = Math.min(spec.mag.length - 1, Math.ceil(fc * 1.03 / sampleRate * spec.n));
+    let m = 0;
+    for (let i = lo; i <= hi; i++) if (spec.mag[i] > m) m = spec.mag[i];
+    return m;
+  };
+  let best = dips[0], bestScore = -1;
+  let globalMax = 0;
+  const loB = Math.floor(80 / sampleRate * spec.n), hiB = Math.min(spec.mag.length - 1, Math.ceil(3000 / sampleRate * spec.n));
+  for (let i = loB; i <= hiB; i++) if (spec.mag[i] > globalMax) globalMax = spec.mag[i];
+  for (const dp of dips) {
+    const f = sampleRate / dp.tau;
+    let sup = 0;
+    for (let k = 1; k <= 8; k++) {
+      if (f * k > 3000) break;
+      sup += ampAt(f * k) / k;
+    }
+    // Grundton-Präsenz: bei steifen Drähten kippt YIN sonst auf f/2 oder f/3,
+    // weil z. B. 3f stark ist. Wer selbst im Spektrum fehlt, wird bestraft.
+    const relFund = globalMax > 0 ? ampAt(f) / globalMax : 0;
+    const presence = relFund < 0.03 ? 0.15 : relFund < 0.1 ? 0.5 : 1;
+    const score = (1 - dp.val) * sup * presence;
+    if (score > bestScore) { bestScore = score; best = dp; }
+  }
+  const tau = best.tau;
+
+  // Parabel-Interpolation für Sub-Sample-Genauigkeit.
+  const x1 = cmnd[tau - 1] || cmnd[tau], x2 = cmnd[tau], x3 = cmnd[tau + 1] || cmnd[tau];
   const a = (x1 + x3 - 2 * x2) / 2;
   const bb = (x3 - x1) / 2;
-  if (a) T0 = T0 - bb / (2 * a);
+  const tauF = a ? tau - bb / (2 * a) : tau;
 
-  const freq = sampleRate / T0;
-  const clarity = c[0] ? maxval / c[0] : 0;
+  const freq = sampleRate / tauF;
+  const clarity = 1 - cmnd[tau]; // 1 = perfekt periodisch
   return { freq, clarity, rms };
+}
+
+/// Pluck-Voting: über alle Frames eines Zupfers clustern (3%-Bänder) und mit
+/// clarity^2 gewichten. Der Anschlag (breitbandig, clarity ~0.5-0.65) und
+/// Subharmonischen-Fehlgriffe (clarity ~0.65-0.72) verlieren so gegen die
+/// Ausklingphase (clarity ~0.8-0.98). An echten Aufnahmen kalibriert:
+/// weicher Zupfer -> beste Frames ab ~40 ms; harter Zupfer -> erst ab ~280 ms.
+function pluckVote(frames) {
+  if (frames.length < 3) return null;
+  const pts = frames.slice().sort((a, b) => a.f - b.f);
+  const clusters = [];
+  for (const p of pts) {
+    const last = clusters[clusters.length - 1];
+    if (last && p.f / last.mean < 1.03) {
+      last.items.push(p);
+      last.mean = last.items.reduce((s, q) => s + q.f, 0) / last.items.length;
+    } else {
+      clusters.push({ items: [p], mean: p.f });
+    }
+  }
+  for (const cl of clusters) {
+    cl.weight = cl.items.reduce((s, q) => s + q.c * q.c, 0);
+    cl.hz = cl.items.reduce((s, q) => s + q.c * q.c * q.f, 0) / cl.weight;
+  }
+  clusters.sort((a, b) => b.weight - a.weight);
+  const best = clusters[0];
+  const second = clusters[1];
+  return {
+    hz: best.hz,
+    count: best.items.length,
+    margin: second ? best.weight / second.weight : Infinity,
+  };
 }
 
 /// Oktavfehler-Schutz: hat das Spektrum bei f/2 einen klaren Peak, war f
@@ -173,7 +293,7 @@ function sideStats(tensions, total, band = 0.10, ref = 0) {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     muFromDiameterMm, muFromBladeMm, tensionNewton, newtonToKgf, freqForTension, hzToNote,
-    median, detectPitch, correctOctave, sideStats, stableReading, GRAVITY,
+    median, detectPitch, correctOctave, sideStats, stableReading, pluckVote, GRAVITY,
   };
 }
 
@@ -508,6 +628,8 @@ const Measure = {
     if (this.listening) { await this.finish(true); return; }
     this.samples = [];
     this.recent = [];
+    this.pluck = [];         // Frames {f, c} des aktuellen Zupfers
+    this.pluckLocked = false;
     this.armed = true;
     this.captured = new Set(); // Indizes der in dieser Sitzung erfassten Speichen
     this.auto = !!(state.wheel && state.wheel.spokes.length);
@@ -538,28 +660,53 @@ const Measure = {
     if (!this.listening) return;
     if (r.freq > 0) r.freq = correctOctave(r.freq, Pitch.freqData, Pitch.binHz);
     if (r.freq > 0) this.liveHz = r.freq;
-    // Gate an echter Aufnahme kalibriert: reale Zupfer erreichen clarity max.
-    // ~0,86 (nie 0,9); rms-Floor hält Dauerbrummen und den leisen Nachklang
-    // der Nachbarspeiche draußen.
-    const good = r.freq >= 80 && r.freq <= 1500 && r.clarity > 0.7 && r.rms >= 0.02;
+
+    // Ein Zupfer = Folge von Frames mit Ton. Attack-Skip wurde durch das
+    // clarity-gewichtete pluckVote ersetzt (siehe dort); fixe Zeitfenster
+    // scheitern, weil weiche Zupfer sofort, harte erst nach ~280 ms sauber sind.
+    const good = r.freq >= 80 && r.freq <= 1500 && r.clarity > 0.5 && r.rms >= 0.006;
     updateGauge(r.freq > 0 ? r.freq : 0, true);
 
-    // Tonpause „scharfschalten“, klarer Anzupfer füllt das Fenster (beide Modi).
+    // Tonpause: Zupfer abschließen, scharfschalten für den nächsten.
+    // Re-Arm erst nach ~10 leisen Frames (~400 ms): die Ausklingphase einer
+    // Speiche dippt kurz unter den rms-Floor und darf nicht als Pause zählen,
+    // sonst erzeugt ein Zupfer zwei Locks (der zweite landet auf der
+    // falschen Speiche).
     if (!good) {
-      this.recent = [];
+      this.silentFrames = (this.silentFrames || 0) + 1;
+      if (this.silentFrames < 8) return;
+      if (this.pluck.length) {
+        if (!this.pluckLocked) {
+          const v = pluckVote(this.pluck); // Fallback bei kurzem/weichem Ton
+          if (v && v.count >= 4 && v.margin >= 1.8) this.commitPluck(v.hz);
+        }
+        this.pluck = [];
+        this.pluckLocked = false;
+      }
       this.armed = true;
       updatePips(0);
       return;
     }
+    this.silentFrames = 0;
     if (this.auto && !this.armed) return; // Ausklingen des erfassten Tons ignorieren
-    this.samples.push(r.freq); // für den Median-Fallback beim manuellen Stopp
-    this.recent.push(r.freq);
-    if (this.recent.length > 24) this.recent.shift();
-    updatePips(this.recent.length);
-    const m = stableReading(this.recent);
-    if (m == null) return;
-    if (this.auto) this.lockReading(m);
-    else { this.resultHz = m; this.finish(false); } // Auto-Stopp bei stabilem Ton
+    this.samples.push(r.freq);
+    this.pluck.push({ f: r.freq, c: r.clarity });
+    if (this.pluck.length > 40) this.pluck.shift();
+    updatePips(this.pluck.length);
+    const v = pluckVote(this.pluck);
+    if (!v) return;
+    // Lock, sobald ein Cluster klar dominiert.
+    if (v.count >= 5 && v.margin >= 2) {
+      this.pluckLocked = true;
+      if (this.auto) this.lockReading(v.hz);
+      else { this.resultHz = v.hz; this.finish(false); }
+    }
+  },
+
+  /// Zupfer-Ergebnis übernehmen (Fallback aus Tonpause oder manuellem Stopp).
+  commitPluck(hz) {
+    if (this.auto) this.lockReading(hz);
+    else { this.resultHz = hz; this.finish(false); }
   },
 
   /// Stabile Messung übernehmen, zur nächsten Speiche schalten, weiter lauschen.
@@ -612,7 +759,7 @@ const Measure = {
       return;
     }
 
-    const result = this.resultHz ?? median(this.samples);
+    const result = this.resultHz ?? (pluckVote(this.pluck) || {}).hz ?? median(this.samples);
     if (result != null) {
       this.resultHz = result;
       if (navigator.vibrate) navigator.vibrate(40);
