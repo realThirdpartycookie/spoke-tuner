@@ -3,12 +3,48 @@ const assert = require('assert');
 const {
   muFromDiameterMm, muFromBladeMm, tensionNewton, newtonToKgf, freqForTension, hzToNote,
   median, correctOctave, sideStats, stableReading, GRAVITY,
+  tensionDeltaPerTurnN, calculateTurnsAdvice, formatTurnsFraction,
+  profileThreadDiaMm, profileModulusPa,
 } = require('./app.js');
 
 // Physik (Port der Flutter-Tests).
 assert.ok(Math.abs(muFromDiameterMm(2.0) - 0.0247) < 0.0247 * 0.02, 'mu(2.0mm round steel)');
 assert.ok(Math.abs(tensionNewton(422, 0.25, 0.0247) - 1100) < 1100 * 0.03, 'T(422Hz)');
 assert.strictEqual(newtonToKgf(GRAVITY), 1.0, 'N->kgf');
+
+// Turns-Berechnung & Speichen-Elastizität.
+// Stahl 290 mm, d=2.0 mm, E=200 GPa:
+// A = pi*1e-6 m^2, k = 2e11 * pi*1e-6 / 0.29 ~= 2.1666e6 N/m.
+// deltaT = k * 0.00045357 * 0.40 ~= 393.1 N/Turn.
+const deltaN = tensionDeltaPerTurnN(290, 2.0, 2.0e11);
+assert.ok(Math.abs(deltaN - 393.1) < 2.0, 'tensionDeltaPerTurnN steel 290mm');
+// Kalibrierter Override hat Vorrang
+assert.strictEqual(tensionDeltaPerTurnN(290, 2.0, 2.0e11, 450), 450, 'calibrated deltaN override');
+
+// Formatierung von Achteldrehungen
+assert.strictEqual(formatTurnsFraction(0), '0', 'turns 0');
+assert.strictEqual(formatTurnsFraction(0.125), '1/8', 'turns 1/8');
+assert.strictEqual(formatTurnsFraction(0.25), '1/4', 'turns 1/4');
+assert.strictEqual(formatTurnsFraction(0.5), '1/2', 'turns 1/2');
+assert.strictEqual(formatTurnsFraction(0.75), '3/4', 'turns 3/4');
+assert.strictEqual(formatTurnsFraction(1.0), '1', 'turns 1');
+assert.strictEqual(formatTurnsFraction(1.25), '1 1/4', 'turns 1 1/4');
+assert.strictEqual(formatTurnsFraction(2.0), '2', 'turns 2');
+
+// Turns-Advice: TIGHTEN, LOOSEN, OK
+const advTighten = calculateTurnsAdvice(1000, 1100, 400); // delta = +100 N -> raw 0.25 -> 1/4
+assert.strictEqual(advTighten.direction, 'TIGHTEN');
+assert.strictEqual(advTighten.turns, 0.25);
+assert.strictEqual(advTighten.turnsLabel, '1/4');
+
+const advLoosen = calculateTurnsAdvice(1200, 1100, 400); // delta = -100 N -> raw 0.25 -> 1/4
+assert.strictEqual(advLoosen.direction, 'LOOSEN');
+assert.strictEqual(advLoosen.turns, 0.25);
+assert.strictEqual(advLoosen.turnsLabel, '1/4');
+
+const advOk = calculateTurnsAdvice(1120, 1100, 400, 0.05); // innerhalb 5% Band
+assert.strictEqual(advOk.direction, 'OK');
+assert.strictEqual(advOk.turns, 0);
 
 // Nicht-runde / Carbon-Speichen.
 // Flache Stahlspeiche 2,3 x 0,9 mm: rho*w*t = 7850*0.0023*0.0009 ~= 0.01625 kg/m.

@@ -316,11 +316,83 @@ function sideStats(tensions, total, band = 0.10, ref = 0) {
   };
 }
 
+const SPOKE_THREAD_PITCH_MM = 0.45357; // 56 TPI Standard-Fahrradnippel
+const SYSTEM_COMPLIANCE_FACTOR = 0.40;  // 40% Dehnung Speiche, 60% Felgenflex
+const MATERIAL_MODULUS_PA = {
+  steel: 2.0e11,
+  stainless: 2.0e11,
+  aluminium: 7.17e10,
+  titanium: 1.1e11,
+  carbon: 1.5e11,
+};
+
+/// Berechnet die theoretische Spannungsänderung pro voller Nippelumdrehung (Newton/Turn).
+function tensionDeltaPerTurnN(totalLengthMm, threadDiameterMm = 2.0, modulusPa = 2.0e11, calibratedNPerTurn = null) {
+  if (calibratedNPerTurn && calibratedNPerTurn > 0) {
+    return calibratedNPerTurn;
+  }
+  const rM = (threadDiameterMm / 2) / 1000;
+  const areaM2 = Math.PI * rM * rM;
+  const totalLengthM = (totalLengthMm || 290) / 1000;
+  const pitchM = SPOKE_THREAD_PITCH_MM / 1000;
+  return (areaM2 * modulusPa / totalLengthM) * pitchM * SYSTEM_COMPLIANCE_FACTOR;
+}
+
+/// Berechnet empfohlene Nippeldrehungen aus gemessener Spannung und Ziel-/Referenzspannung.
+function calculateTurnsAdvice(measuredN, targetN, deltaNPerTurn, tolerancePct = 0.05) {
+  if (!(measuredN > 0) || !(targetN > 0) || !(deltaNPerTurn > 0)) {
+    return { direction: 'OK', turns: 0, turnsLabel: 'OK', deltaN: 0 };
+  }
+  const deltaN = targetN - measuredN;
+  const relDiff = Math.abs(deltaN) / targetN;
+  if (relDiff <= tolerancePct) {
+    return { direction: 'OK', turns: 0, turnsLabel: 'OK', deltaN };
+  }
+  const rawTurns = Math.abs(deltaN) / deltaNPerTurn;
+  const roundedTurns = Math.min(2.0, Math.round(rawTurns * 8) / 8);
+  if (roundedTurns === 0) {
+    return { direction: 'OK', turns: 0, turnsLabel: 'OK', deltaN };
+  }
+  const direction = deltaN > 0 ? 'TIGHTEN' : 'LOOSEN';
+  return {
+    direction,
+    turns: roundedTurns,
+    turnsLabel: formatTurnsFraction(roundedTurns),
+    deltaN,
+  };
+}
+
+/// Formatiert Dezimal-Umdrehungen in werkstatttypische Brüche (1/8, 1/4, 1/2 etc.).
+function formatTurnsFraction(turns) {
+  const eighths = Math.round(turns * 8);
+  const whole = Math.floor(eighths / 8);
+  const rem = eighths % 8;
+  const fractions = ['', '1/8', '1/4', '3/8', '1/2', '5/8', '3/4', '7/8'];
+  const fracStr = fractions[rem];
+  if (whole === 0 && rem === 0) return '0';
+  if (whole === 0) return fracStr;
+  if (rem === 0) return String(whole);
+  return `${whole} ${fracStr}`;
+}
+
+function profileThreadDiaMm(p) {
+  if (p && p.threadDiameterMm && p.threadDiameterMm > 0) return p.threadDiameterMm;
+  if (p && p.shape === 'round' && p.diameterMm >= 2.0) return p.diameterMm;
+  return 2.0;
+}
+
+function profileModulusPa(p) {
+  const k = p && p.materialKey;
+  return MATERIAL_MODULUS_PA[k] || 2.0e11;
+}
+
 // node-Export für selftest; im Browser ohne Wirkung.
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     muFromDiameterMm, muFromBladeMm, tensionNewton, newtonToKgf, freqForTension, hzToNote,
     median, detectPitch, correctOctave, sideStats, stableReading, pluckVote, weightedMedian, GRAVITY,
+    tensionDeltaPerTurnN, calculateTurnsAdvice, formatTurnsFraction,
+    profileThreadDiaMm, profileModulusPa, MATERIAL_MODULUS_PA,
   };
 }
 
@@ -363,7 +435,13 @@ function load() {
     if (raw) state = Object.assign(state, JSON.parse(raw));
     if (state.unit === 'kp') state.unit = 'kgf'; // Alt-Code migrieren
     if (state.wheel && state.wheel.profile) state.wheel.profile = normalizeProfile(state.wheel.profile);
-    if (state.wheel) { // Alt-Räder ohne Zielspannung migrieren
+    if (state.wheel) { // Alt-Räder migrieren
+      state.wheel.leftLengthMm = +state.wheel.leftLengthMm || 250;
+      state.wheel.rightLengthMm = +state.wheel.rightLengthMm || 250;
+      state.wheel.leftTotalLengthMm = +state.wheel.leftTotalLengthMm || (state.wheel.leftLengthMm ? state.wheel.leftLengthMm + 40 : 290);
+      state.wheel.rightTotalLengthMm = +state.wheel.rightTotalLengthMm || (state.wheel.rightLengthMm ? state.wheel.rightLengthMm + 40 : 290);
+      state.wheel.targetMode = state.wheel.targetMode === 'relative' ? 'relative' : 'absolute';
+      state.wheel.calibratedNPerTurn = +state.wheel.calibratedNPerTurn > 0 ? +state.wheel.calibratedNPerTurn : null;
       state.wheel.targetLeftN = +state.wheel.targetLeftN || 0;
       state.wheel.targetRightN = +state.wheel.targetRightN || 0;
     }
@@ -396,22 +474,74 @@ function createWheel(name, position, spokeCount) {
   return {
     name, position, profile: normalizeProfile(DEFAULT_PROFILE),
     leftLengthMm: 250, rightLengthMm: 250,
+    leftTotalLengthMm: 290, rightTotalLengthMm: 290,
+    targetMode: 'absolute',
+    calibratedNPerTurn: null,
     targetLeftN: 0, targetRightN: 0, // 0 = kein Ziel gesetzt
     spokes,
   };
 }
 
-function lengthMmForSide(w, side) { return side === 'left' ? w.leftLengthMm : w.rightLengthMm; }
+function vibLengthMmForSide(w, side) { return side === 'left' ? (w.leftLengthMm || 250) : (w.rightLengthMm || 250); }
+function totalLengthMmForSide(w, side) { return side === 'left' ? (w.leftTotalLengthMm || w.leftLengthMm || 290) : (w.rightTotalLengthMm || w.rightLengthMm || 290); }
+function lengthMmForSide(w, side) { return vibLengthMmForSide(w, side); }
 function targetForSide(w, side) { return (side === 'left' ? w.targetLeftN : w.targetRightN) || 0; }
+
+function sideMedianTension(w, side) {
+  if (!w || !w.spokes) return 0;
+  const readings = w.spokes.filter(s => s.side === side && s.reading).map(s => s.reading.tensionN);
+  return median(readings) || 0;
+}
+
+function effectiveTargetNForSpoke(w, spoke) {
+  if (!w || !spoke) return 0;
+  if (w.targetMode === 'relative') {
+    const med = sideMedianTension(w, spoke.side);
+    return med > 0 ? med : targetForSide(w, spoke.side);
+  }
+  return targetForSide(w, spoke.side);
+}
+
 /// Ziel-Frequenz der gewählten Speiche (null ohne Rad/Speiche/Ziel).
 function targetFreqForSelected() {
   const w = state.wheel, s = selectedSpoke();
   if (!w || !s) return null;
-  const tN = targetForSide(w, s.side);
-  return tN > 0 ? freqForTension(tN, lengthMmForSide(w, s.side) / 1000, profileMu(w.profile)) : null;
+  const tN = effectiveTargetNForSpoke(w, s);
+  return tN > 0 ? freqForTension(tN, vibLengthMmForSide(w, s.side) / 1000, profileMu(w.profile)) : null;
 }
 function tensionForHzOnSide(w, hz, side) {
-  return tensionNewton(hz, lengthMmForSide(w, side) / 1000, profileMu(w.profile));
+  return tensionNewton(hz, vibLengthMmForSide(w, side) / 1000, profileMu(w.profile));
+}
+
+function getTurnsAdviceForSpoke(w, spoke, hz = null) {
+  if (!w || !spoke) return null;
+  const currentN = hz ? tensionForHzOnSide(w, hz, spoke.side) : (spoke.reading ? spoke.reading.tensionN : null);
+  if (!(currentN > 0)) return null;
+  const targetN = effectiveTargetNForSpoke(w, spoke);
+  if (!(targetN > 0)) return null;
+
+  const totalLen = totalLengthMmForSide(w, spoke.side);
+  const threadDia = profileThreadDiaMm(w.profile);
+  const modPa = profileModulusPa(w.profile);
+  const deltaNPerTurn = tensionDeltaPerTurnN(totalLen, threadDia, modPa, w.calibratedNPerTurn);
+
+  const adv = calculateTurnsAdvice(currentN, targetN, deltaNPerTurn);
+  let label = '';
+  if (adv.direction === 'OK') {
+    label = t('turns.ok');
+  } else if (adv.direction === 'TIGHTEN') {
+    label = `+${adv.turnsLabel} ${t('turns.turnUnit')} ${t('turns.tighten')} ↻`;
+  } else {
+    label = `−${adv.turnsLabel} ${t('turns.turnUnit')} ${t('turns.loosen')} ↺`;
+  }
+  return {
+    ...adv,
+    currentN,
+    targetN,
+    deltaNPerTurn,
+    label,
+    isRelative: w.targetMode === 'relative',
+  };
 }
 function selectedSpoke() {
   const w = state.wheel;
@@ -662,6 +792,7 @@ const Measure = {
     this.auto = !!(state.wheel && state.wheel.spokes.length);
     this.resultHz = null;
     this.liveHz = 0;
+    this.lastDiag = null;
     setHint(this.auto ? this.progressHint() : t('hint.start'));
     this.listening = true;
     updateButton();
@@ -707,13 +838,21 @@ const Measure = {
         const totalW = this.pluck.reduce((s, q) => s + q.c * q.c, 0);
         const bestW = v ? this.pluck.filter(q => Math.abs(q.f / v.hz - 1) < 0.03).reduce((s, q) => s + q.c * q.c, 0) : 0;
         if (v && v.count >= 4 && bestW >= 0.35 * totalW) {
+          this.lastDiag = null;
           this.commitPluck(v.hz);
         } else {
           // Fallback Dual-Mode-Sweep: Frames verteilen sich auf zwei Modi,
           // kein Cluster erreicht die Huerde. Stabile Frames (c>=0.75) sind
           // trotzdem verlaesslich -> gewichteter Median ueber sie.
           const strong = this.pluck.filter(q => q.c >= 0.75);
-          if (strong.length >= 2) this.commitPluck(weightedMedian(strong));
+          if (strong.length >= 2) {
+            this.lastDiag = null;
+            this.commitPluck(weightedMedian(strong));
+          } else {
+            const diag = this.pluck.length < 4 ? t('diag.tooShort') : t('diag.unsteady');
+            this.lastDiag = diag;
+            setHint(diag);
+          }
         }
         this.pluck = [];
         this.pluckLocked = false;
@@ -734,7 +873,10 @@ const Measure = {
     if (this.pluck.length && this._onsetRun === 3) {
       const onsetFrames = this.pluck.splice(-3); // gehoeren zum neuen Zupfer
       const v = pluckVote(this.pluck);
-      if (v && v.count >= 4) this.commitPluck(v.hz);
+      if (v && v.count >= 4) {
+        this.lastDiag = null;
+        this.commitPluck(v.hz);
+      }
       this.pluck = onsetFrames;
       this._onsetRun = 0;
       updatePips(this.pluck.length);
@@ -752,6 +894,11 @@ const Measure = {
 
   /// Zupfer-Ergebnis übernehmen (Fallback aus Tonpause oder manuellem Stopp).
   commitPluck(hz) {
+    this.lastDiag = null;
+    if (typeof calibWizard !== 'undefined' && calibWizard) {
+      if (calibWizard.step === 1 && !calibWizard.f1) calibWizard.f1 = hz;
+      else if (calibWizard.step === 2 && !calibWizard.f2) calibWizard.f2 = hz;
+    }
     if (this.auto) this.lockReading(hz);
     else { this.resultHz = hz; this.finish(false); }
   },
@@ -809,6 +956,7 @@ const Measure = {
     const result = this.resultHz ?? (pluckVote(this.pluck) || {}).hz ?? median(this.samples);
     if (result != null) {
       this.resultHz = result;
+      this.lastDiag = null;
       if (navigator.vibrate) navigator.vibrate(40);
       setHint(aborted ? t('hint.stopped') : t('hint.captured'));
       if (!aborted) {
@@ -817,7 +965,7 @@ const Measure = {
       }
     } else {
       this.resultHz = null;
-      setHint(aborted ? t('hint.aborted') : t('hint.noClear'));
+      setHint(aborted ? t('hint.aborted') : (this.lastDiag || t('hint.noClear')));
     }
     updateGauge(this.resultHz ?? 0, false);
     renderApplySection();
@@ -893,20 +1041,33 @@ function updateGauge(hz, listening) {
   document.getElementById('gauge-tension').textContent =
     hz > 0 ? (n != null ? formatTension(n) : '—') : '--';
 
-  // Zielspannung der Seite: live die Abweichung in %, sonst Ziel + Ziel-Frequenz.
+  // Zielspannung & Turns-Empfehlung
   const tgtEl = document.getElementById('gauge-target');
+  const turnsEl = document.getElementById('gauge-turns');
   const w = state.wheel, s = selectedSpoke();
-  const tgt = w && s ? targetForSide(w, s.side) : 0;
-  if (tgt > 0 && n != null && hz > 0) {
-    const dev = (n - tgt) / tgt * 100;
+  const effectiveTgt = effectiveTargetNForSpoke(w, s);
+  const advice = (w && s && (n != null || (s.reading && s.reading.tensionN))) ? getTurnsAdviceForSpoke(w, s, hz > 0 ? hz : null) : null;
+
+  if (advice && turnsEl) {
+    turnsEl.hidden = false;
+    turnsEl.className = 'gauge-turns ' + advice.direction.toLowerCase();
+    turnsEl.textContent = advice.label;
+  } else if (turnsEl) {
+    turnsEl.hidden = true;
+  }
+
+  if (effectiveTgt > 0 && n != null && hz > 0) {
+    const dev = (n - effectiveTgt) / effectiveTgt * 100;
     const cls = Math.abs(dev) <= 5 ? 'ok' : Math.abs(dev) <= 10 ? 'near' : 'off';
     tgtEl.hidden = false;
     tgtEl.className = 'gauge-target ' + cls;
-    tgtEl.textContent = `${t('gauge.target')} ${formatTension(tgt)} · ${dev >= 0 ? '+' : '−'}${Math.abs(dev).toFixed(0)} %`;
-  } else if (tgt > 0) {
+    const tgtLabel = (w && w.targetMode === 'relative') ? t('gauge.targetMedian') : t('gauge.target');
+    tgtEl.textContent = `${tgtLabel} ${formatTension(effectiveTgt)} · ${dev >= 0 ? '+' : '−'}${Math.abs(dev).toFixed(0)} %`;
+  } else if (effectiveTgt > 0) {
     tgtEl.hidden = false;
     tgtEl.className = 'gauge-target';
-    tgtEl.textContent = `${t('gauge.target')} ${formatTension(tgt)} ≈ ${fmtNum(targetFreqForSelected(), 0)} Hz`;
+    const tgtLabel = (w && w.targetMode === 'relative') ? t('gauge.targetMedian') : t('gauge.target');
+    tgtEl.textContent = `${tgtLabel} ${formatTension(effectiveTgt)} ≈ ${fmtNum(targetFreqForSelected(), 0)} Hz`;
   } else {
     tgtEl.hidden = true;
   }
@@ -930,9 +1091,17 @@ function renderMeasureContext() {
     ];
     if (spoke) {
       rows.push([t('ctx.spoke'), `${t('label.nr')} ${spoke.index + 1} · ${sideLabel(spoke.side)}`]);
-      rows.push([t('ctx.freeLength'), `${fmtNum(Math.round(lengthMmForSide(w, spoke.side)), 0)} mm`]);
-      const tgt = targetForSide(w, spoke.side);
-      if (tgt > 0) rows.push([t('gauge.target'), `${formatTension(tgt)} ≈ ${fmtNum(targetFreqForSelected(), 0)} Hz`]);
+      rows.push([t('build.vibLeft'), `${fmtNum(Math.round(vibLengthMmForSide(w, spoke.side)), 0)} mm`]);
+      rows.push([t('build.totalLeft'), `${fmtNum(Math.round(totalLengthMmForSide(w, spoke.side)), 0)} mm`]);
+      const effTgt = effectiveTargetNForSpoke(w, spoke);
+      if (effTgt > 0) {
+        const modeLabel = w.targetMode === 'relative' ? t('gauge.targetMedian') : t('gauge.target');
+        rows.push([modeLabel, `${formatTension(effTgt)} ≈ ${fmtNum(targetFreqForSelected(), 0)} Hz`]);
+      }
+      const adv = getTurnsAdviceForSpoke(w, spoke);
+      if (adv) {
+        rows.push([t('turns.adviceLabel'), adv.label]);
+      }
     }
     body = `<h3>${t('ctx.activeWheel')}</h3>` +
       rows.map(([k, v]) => `<div class="info-row"><span>${k}</span><b>${v}</b></div>`).join('') +
@@ -1015,13 +1184,104 @@ function renderCreateForm(el) {
   });
 }
 
+let calibWizard = null;
+
+function renderCalibCard(w) {
+  const threadDia = profileThreadDiaMm(w.profile);
+  const modPa = profileModulusPa(w.profile);
+  const theoN = tensionDeltaPerTurnN(totalLengthMmForSide(w, 'left'), threadDia, modPa);
+
+  if (!calibWizard) {
+    const isCalibrated = w.calibratedNPerTurn && w.calibratedNPerTurn > 0;
+    return `
+      <div class="card calib-card">
+        <div class="row-between">
+          <b>${t('calib.title')}</b>
+          ${isCalibrated ? `<span class="chip" style="color:var(--green)">✓ ${t('calib.calibrated', { val: formatTension(w.calibratedNPerTurn) })}</span>` : ''}
+        </div>
+        <p class="muted small">${t('calib.desc')}</p>
+        <p class="small">${isCalibrated ? t('calib.calibrated', { val: `<b>${formatTension(w.calibratedNPerTurn)}</b>` }) : t('calib.theoretical', { val: `<b>${formatTension(theoN)}</b>` })}</p>
+        <div class="row-between" style="margin-top:10px;gap:8px">
+          <button class="btn-outline small" id="calib-start">${t('calib.startBtn')}</button>
+          ${isCalibrated ? `<button class="btn-outline small" id="calib-reset">${t('calib.resetBtn')}</button>` : ''}
+        </div>
+      </div>`;
+  }
+
+  const sp = w.spokes[calibWizard.spokeIndex] || w.spokes[0];
+  const side = sp.side;
+  let body = '';
+
+  if (calibWizard.step === 1) {
+    const curHz = calibWizard.f1 || (sp.reading ? sp.reading.freqHz : null);
+    body = `
+      <p class="small"><b>${t('calib.step1', { hz1: curHz ? fmtNum(curHz, 1) : '--' })}</b> (${t('ctx.spoke')} ${sp.index + 1} · ${sideLabel(side)})</p>
+      ${curHz ? `<p class="muted small">Ausgangston: <b>${fmtNum(curHz, 1)} Hz</b> (${formatTension(tensionForHzOnSide(w, curHz, side))})</p>` : `<p class="muted small">${t('hint.idle')}</p>`}
+      <div class="field">
+        <span>Frequenz f1 (Hz)</span>
+        <div class="num-wrap">
+          <input id="calib-f1" type="number" inputmode="decimal" min="80" max="1200" step="0.5" value="${curHz ? fmtNum(curHz, 1) : ''}" placeholder="z. B. 480">
+          <span class="num-unit">Hz</span>
+        </div>
+      </div>
+      <div class="row-between" style="margin-top:10px;gap:8px">
+        <button class="btn-filled small" id="calib-next" style="margin:0">Weiter zu Schritt 2 →</button>
+        <button class="btn-outline small" id="calib-cancel">${t('calib.cancelBtn')}</button>
+      </div>`;
+  } else {
+    const f1 = calibWizard.f1;
+    const t1 = tensionForHzOnSide(w, f1, side);
+    const curHz2 = calibWizard.f2 || (sp.reading && Math.abs(sp.reading.freqHz - f1) > 2 ? sp.reading.freqHz : null);
+    const t2 = curHz2 ? tensionForHzOnSide(w, curHz2, side) : null;
+    const deltaT = (t2 != null && t1 != null) ? Math.abs(t2 - t1) : null;
+
+    body = `
+      <p class="small"><b>${t('calib.step2')}</b> (${t('ctx.spoke')} ${sp.index + 1} · ${sideLabel(side)})</p>
+      <p class="muted small">Ausgangswert f1: <b>${fmtNum(f1, 1)} Hz</b> (${formatTension(t1)})</p>
+      <div class="field">
+        <span>Frequenz f2 nach +1 Umdrehung (Hz)</span>
+        <div class="num-wrap">
+          <input id="calib-f2" type="number" inputmode="decimal" min="80" max="1400" step="0.5" value="${curHz2 ? fmtNum(curHz2, 1) : ''}" placeholder="z. B. 530">
+          <span class="num-unit">Hz</span>
+        </div>
+      </div>
+      ${deltaT != null && deltaT > 20 ? `
+        <div class="note-box" style="margin:10px 0;background:color-mix(in srgb, var(--green) 12%, var(--surface))">
+          <b>Ergebnis: ΔT = ${formatTension(deltaT)} / Umdrehung</b>
+          <div class="muted small">Δf = ${fmtNum(Math.abs(curHz2 - f1), 1)} Hz</div>
+        </div>
+        <button class="btn-filled small" id="calib-save" style="margin:6px 0 10px">${t('calib.saveBtn', { val: formatTension(deltaT) })}</button>
+      ` : ''}
+      <div class="row-between" style="gap:8px">
+        <button class="btn-outline small" id="calib-back">← Zurück</button>
+        <button class="btn-outline small" id="calib-cancel">${t('calib.cancelBtn')}</button>
+      </div>`;
+  }
+
+  return `
+    <div class="card calib-card active">
+      <div class="row-between">
+        <b>${t('calib.title')}</b>
+        <span class="chip primary">Schritt ${calibWizard.step}/2</span>
+      </div>
+      ${body}
+    </div>`;
+}
+
 function renderWheelDetail(el, w) {
-  // Referenz für Band-Farben: Zielspannung der Seite, sonst Seitenmittel.
+  // Referenz für Band-Farben: Zielspannung bzw. Median der Seite, sonst Seitenmittel.
   const avg = {
     left: sideStats(w.spokes.filter(s => s.side === 'left' && s.reading).map(s => s.reading.tensionN), 0).avg,
     right: sideStats(w.spokes.filter(s => s.side === 'right' && s.reading).map(s => s.reading.tensionN), 0).avg,
   };
-  const ref = { left: w.targetLeftN || avg.left, right: w.targetRightN || avg.right };
+  const med = {
+    left: sideMedianTension(w, 'left'),
+    right: sideMedianTension(w, 'right'),
+  };
+  const ref = {
+    left: w.targetMode === 'relative' ? (med.left || w.targetLeftN || avg.left) : (w.targetLeftN || avg.left),
+    right: w.targetMode === 'relative' ? (med.right || w.targetRightN || avg.right) : (w.targetRightN || avg.right),
+  };
 
   el.innerHTML = `
     <div class="row-between">
@@ -1036,13 +1296,33 @@ function renderWheelDetail(el, w) {
       <h3>${t('build.title')}</h3>
       <p class="muted small">${t('build.subtitle')}</p>
       ${profileEditorHtml(w)}
-      ${lengthInput(t('build.freeLeft'), 'left', w.leftLengthMm)}
-      ${lengthInput(t('build.freeRight'), 'right', w.rightLengthMm)}
-      <p class="muted small">${t('build.note')}</p>
-      ${targetInput(t('build.targetLeft'), 'left', w.targetLeftN)}
-      ${targetInput(t('build.targetRight'), 'right', w.targetRightN)}
-      <p class="muted small">${t('build.targetHint')}</p>
+      <hr>
+      <div class="field">${t('mode.title')}
+        <div class="seg" id="w-mode">
+          <button data-mode="absolute" class="${w.targetMode !== 'relative' ? 'sel' : ''}">${t('mode.absolute')}</button>
+          <button data-mode="relative" class="${w.targetMode === 'relative' ? 'sel' : ''}">${t('mode.relative')}</button>
+        </div>
+        <p class="muted small">${w.targetMode === 'relative' ? t('mode.relativeHint') : t('mode.absoluteHint')}</p>
+      </div>
+      <hr>
+      ${lengthInput(t('build.vibLeft'), 'left', 'vib', w.leftLengthMm)}
+      ${lengthInput(t('build.vibRight'), 'right', 'vib', w.rightLengthMm)}
+      ${lengthInput(t('build.totalLeft'), 'left', 'total', w.leftTotalLengthMm)}
+      ${lengthInput(t('build.totalRight'), 'right', 'total', w.rightTotalLengthMm)}
+      <p class="muted small">${t('build.lengthsNote')}</p>
+      <hr>
+      ${w.targetMode === 'relative' ? `
+        <div class="info-row"><span>${t('side.left')} ${t('gauge.targetMedian')}:</span><b>${med.left > 0 ? formatTension(med.left) : '—'}</b></div>
+        <div class="info-row"><span>${t('side.right')} ${t('gauge.targetMedian')}:</span><b>${med.right > 0 ? formatTension(med.right) : '—'}</b></div>
+        <p class="muted small">${t('mode.relativeHint')}</p>
+      ` : `
+        ${targetInput(t('build.targetLeft'), 'left', w.targetLeftN)}
+        ${targetInput(t('build.targetRight'), 'right', w.targetRightN)}
+        <p class="muted small">${t('build.targetHint')}</p>
+      `}
     </div>
+
+    ${renderCalibCard(w)}
 
     <div class="card wheel-card">
       ${wheelSvg(w, ref)}
@@ -1061,10 +1341,16 @@ function renderWheelDetail(el, w) {
     if (confirm(t('confirm.discardWheel'))) {
       state.wheel = null;
       state.selectedSpokeIndex = 0;
+      calibWizard = null;
       save();
       render();
     }
   });
+  el.querySelectorAll('#w-mode button').forEach(b => b.addEventListener('click', () => {
+    w.targetMode = b.dataset.mode;
+    save();
+    render();
+  }));
   el.querySelectorAll('#w-shape button').forEach(b => b.addEventListener('click', () => {
     w.profile.shape = b.dataset.shape;
     save();
@@ -1088,10 +1374,14 @@ function renderWheelDetail(el, w) {
   el.querySelectorAll('.len-input').forEach(inp => {
     inp.addEventListener('change', () => {
       let v = Math.round(parseFloat(inp.value));
-      if (!Number.isFinite(v)) v = 250;
-      v = Math.max(60, Math.min(400, v)); // sane physical bounds
+      if (!Number.isFinite(v)) v = inp.dataset.type === 'total' ? 290 : 250;
+      v = Math.max(60, Math.min(450, v)); // sane physical bounds
       inp.value = v;
-      if (inp.dataset.side === 'left') w.leftLengthMm = v; else w.rightLengthMm = v;
+      if (inp.dataset.type === 'total') {
+        if (inp.dataset.side === 'left') w.leftTotalLengthMm = v; else w.rightTotalLengthMm = v;
+      } else {
+        if (inp.dataset.side === 'left') w.leftLengthMm = v; else w.rightLengthMm = v;
+      }
       save();
       render();
     });
@@ -1107,6 +1397,68 @@ function renderWheelDetail(el, w) {
       render();
     });
   });
+
+  // Calibration Wizard events
+  const calibStart = el.querySelector('#calib-start');
+  if (calibStart) calibStart.addEventListener('click', () => {
+    calibWizard = { step: 1, f1: selectedSpoke()?.reading?.freqHz || null, f2: null, spokeIndex: state.selectedSpokeIndex };
+    renderWheelTab();
+  });
+  const calibReset = el.querySelector('#calib-reset');
+  if (calibReset) calibReset.addEventListener('click', () => {
+    delete w.calibratedNPerTurn;
+    calibWizard = null;
+    save();
+    render();
+  });
+  const calibCancel = el.querySelector('#calib-cancel');
+  if (calibCancel) calibCancel.addEventListener('click', () => {
+    calibWizard = null;
+    renderWheelTab();
+  });
+  const calibBack = el.querySelector('#calib-back');
+  if (calibBack) calibBack.addEventListener('click', () => {
+    if (calibWizard) calibWizard.step = 1;
+    renderWheelTab();
+  });
+  const calibF1 = el.querySelector('#calib-f1');
+  if (calibF1) calibF1.addEventListener('input', () => {
+    if (calibWizard) calibWizard.f1 = parseFloat(calibF1.value) || null;
+  });
+  const calibNext = el.querySelector('#calib-next');
+  if (calibNext) calibNext.addEventListener('click', () => {
+    const val = calibF1 ? parseFloat(calibF1.value) : calibWizard?.f1;
+    if (val > 50 && calibWizard) {
+      calibWizard.f1 = val;
+      calibWizard.step = 2;
+      renderWheelTab();
+    }
+  });
+  const calibF2 = el.querySelector('#calib-f2');
+  if (calibF2) calibF2.addEventListener('input', () => {
+    if (calibWizard) {
+      calibWizard.f2 = parseFloat(calibF2.value) || null;
+      renderWheelTab();
+    }
+  });
+  const calibSave = el.querySelector('#calib-save');
+  if (calibSave) calibSave.addEventListener('click', () => {
+    if (calibWizard && calibWizard.f1 && calibWizard.f2) {
+      const sp = w.spokes[calibWizard.spokeIndex] || w.spokes[0];
+      const t1 = tensionForHzOnSide(w, calibWizard.f1, sp.side);
+      const t2 = tensionForHzOnSide(w, calibWizard.f2, sp.side);
+      const delta = Math.abs(t2 - t1);
+      if (delta > 20) {
+        w.calibratedNPerTurn = Math.round(delta);
+        const valStr = formatTension(w.calibratedNPerTurn);
+        calibWizard = null;
+        save();
+        render();
+        toast(t('toast.calibrated', { val: valStr }));
+      }
+    }
+  });
+
   el.querySelectorAll('.spoke-dot').forEach(dot => dot.addEventListener('click', () => {
     state.selectedSpokeIndex = parseInt(dot.dataset.index, 10);
     save();
@@ -1119,11 +1471,11 @@ function renderWheelDetail(el, w) {
   renderEvenness(w);
 }
 
-function lengthInput(label, side, value) {
+function lengthInput(label, side, type, value) {
   return `<div class="field"><span>${label}</span>
     <div class="num-wrap">
-      <input class="len-input" data-side="${side}" type="number" inputmode="numeric"
-             min="60" max="400" step="1" value="${Math.round(value)}">
+      <input class="len-input" data-side="${side}" data-type="${type}" type="number" inputmode="numeric"
+             min="60" max="450" step="1" value="${Math.round(value)}">
       <span class="num-unit">mm</span>
     </div>
   </div>`;
@@ -1223,6 +1575,7 @@ function renderSelectedSpoke() {
     return;
   }
   const r = spoke.reading;
+  const adv = getTurnsAdviceForSpoke(state.wheel, spoke);
   el.innerHTML = `
     <div class="row-between">
       <h3>${t('ctx.spoke')} ${spoke.index + 1}</h3>
@@ -1238,6 +1591,11 @@ function renderSelectedSpoke() {
       <div class="reading">
         <div class="reading-main">${formatTension(r.tensionN)}</div>
         <div class="muted">${fmtNum(r.freqHz, 1)} Hz · ${noteHtml(r.freqHz)}</div>
+        ${adv ? `
+          <div class="spoke-turns ${adv.direction.toLowerCase()}">
+            <span class="turns-badge">${adv.label}</span>
+            <span class="muted small">${adv.isRelative ? t('gauge.targetMedian') : t('gauge.target')}: ${formatTension(adv.targetN)}</span>
+          </div>` : ''}
       </div>` : `<p class="muted">${t('spoke.notMeasured')}</p>`}`;
 
   el.querySelectorAll('#spoke-side button').forEach(b => b.addEventListener('click', () => {
@@ -1251,11 +1609,14 @@ function renderEvenness(w) {
   const el = document.getElementById('evenness');
   if (!el) return;
   const tFor = side => w.spokes.filter(s => s.side === side && s.reading).map(s => s.reading.tensionN);
+  const refLeft = (w.targetMode === 'relative' ? sideMedianTension(w, 'left') : w.targetLeftN) || 0;
+  const refRight = (w.targetMode === 'relative' ? sideMedianTension(w, 'right') : w.targetRightN) || 0;
   const stats = {
-    left: sideStats(tFor('left'), w.spokes.filter(s => s.side === 'left').length, 0.10, w.targetLeftN),
-    right: sideStats(tFor('right'), w.spokes.filter(s => s.side === 'right').length, 0.10, w.targetRightN),
+    left: sideStats(tFor('left'), w.spokes.filter(s => s.side === 'left').length, 0.10, refLeft),
+    right: sideStats(tFor('right'), w.spokes.filter(s => s.side === 'right').length, 0.10, refRight),
   };
-  el.innerHTML = `<h3>${t('even.title')}</h3>` +
+  const modeText = w.targetMode === 'relative' ? ` (${t('mode.relative')})` : '';
+  el.innerHTML = `<h3>${t('even.title')}${modeText}</h3>` +
     sideStatsHtml(t('side.left'), stats.left) + '<hr>' + sideStatsHtml(t('side.right'), stats.right) +
     `<p class="muted small">${t('even.footer')}</p>`;
 }
